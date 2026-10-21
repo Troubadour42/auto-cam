@@ -7,6 +7,8 @@ import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Matrix
+import android.graphics.Rect
+import android.graphics.RectF
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
@@ -41,6 +43,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
 import kotlin.math.abs
+import kotlin.math.max
 
 class MainActivity : AppCompatActivity() {
     private enum class Screen { HOME, LIVE, REVIEW }
@@ -85,7 +88,8 @@ class MainActivity : AppCompatActivity() {
     private var recorder: MediaRecorder? = null
     private var recording = false
     private var clip: File? = null
-    private var videoSize = Size(1920, 1080)
+    private var videoSize = Size(1440, 1080)
+    private var activeArray: Rect? = null
     private var sensorOrientation = 270
     private var minZoom = 1f
     private var startedAt = 0L
@@ -122,7 +126,7 @@ class MainActivity : AppCompatActivity() {
                 if (camera != null) startPreview() else openCamera()
             }
             override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
-                mirrorPreview()
+                configureTransform()
             }
             override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture) = true
             override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) {}
@@ -201,6 +205,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        val ratio = uprightRatio()
+        previewCard.ratio = ratio
+        reviewCard.ratio = ratio
+        preview.post { configureTransform() }
         applyChrome()
     }
 
@@ -351,10 +359,17 @@ class MainActivity : AppCompatActivity() {
         }
         val chars = manager.getCameraCharacteristics(id)
         sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 270
+        activeArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
         minZoom = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             chars.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.lower ?: 1f
         } else 1f
         videoSize = chooseSize(chars)
+        runOnUiThread {
+            val ratio = uprightRatio()
+            previewCard.ratio = ratio
+            reviewCard.ratio = ratio
+            preview.post { configureTransform() }
+        }
         message.visibility = View.GONE
         try {
             manager.openCamera(id, object : CameraDevice.StateCallback() {
@@ -391,12 +406,29 @@ class MainActivity : AppCompatActivity() {
 
     private fun chooseSize(chars: CameraCharacteristics): Size {
         val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-        val sizes = map?.getOutputSizes(MediaRecorder::class.java)?.toList().orEmpty()
-        if (sizes.isEmpty()) return Size(1280, 720)
-        return sizes
-            .filter { it.width <= 1920 && it.height <= 1080 }
-            .minByOrNull { abs(it.width.toFloat() / it.height - 16f / 9f) }
-            ?: sizes.maxBy { it.width * it.height }
+        val recorder = map?.getOutputSizes(MediaRecorder::class.java)?.toSet().orEmpty()
+        val previewSizes = map?.getOutputSizes(android.graphics.SurfaceTexture::class.java)?.toList().orEmpty()
+        val sizes = previewSizes.filter { recorder.isEmpty() || it in recorder }.ifEmpty { recorder.toList() }
+        if (sizes.isEmpty()) return Size(1440, 1080)
+        val active = activeArray
+        val target = if (active != null && active.height() > 0) {
+            active.width().toFloat() / active.height()
+        } else {
+            4f / 3f
+        }
+        val capped = sizes.filter { max(it.width, it.height) <= 1920 }.ifEmpty { sizes }
+        return capped.minBy {
+            val aspect = it.width.toFloat() / it.height
+            abs(aspect - target) * 100f - (it.width * it.height) / 1_000_000f
+        }
+    }
+
+    private fun uprightRatio(): Float {
+        val turn = (sensorOrientation - displayRotationDegrees() + 360) % 360
+        val swap = turn == 90 || turn == 270
+        val width = if (swap) videoSize.height else videoSize.width
+        val height = if (swap) videoSize.width else videoSize.height
+        return width.toFloat() / height.toFloat()
     }
 
     private fun startPreview() {
@@ -404,7 +436,7 @@ class MainActivity : AppCompatActivity() {
         if (recording) return
         val texture = preview.surfaceTexture ?: return
         texture.setDefaultBufferSize(videoSize.width, videoSize.height)
-        mirrorPreview()
+        runOnUiThread { configureTransform() }
         val surface = Surface(texture)
         closeSession()
         try {
@@ -414,11 +446,7 @@ class MainActivity : AppCompatActivity() {
                     session = capture
                     val request = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                         addTarget(surface)
-                        set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                        set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                            set(CaptureRequest.CONTROL_ZOOM_RATIO, minZoom)
-                        }
+                        applyWideView()
                     }
                     try {
                         capture.setRepeatingRequest(request.build(), null, handler)
@@ -434,15 +462,37 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun mirrorPreview() {
-        if (!front) {
-            preview.setTransform(Matrix())
-            return
+    private fun CaptureRequest.Builder.applyWideView() {
+        set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+        set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+        activeArray?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            set(CaptureRequest.CONTROL_ZOOM_RATIO, minZoom)
         }
-        val viewWidth = preview.width.toFloat()
-        val viewHeight = preview.height.toFloat()
-        if (viewWidth == 0f || viewHeight == 0f) return
-        preview.setTransform(Matrix().apply { setScale(-1f, 1f, viewWidth / 2f, viewHeight / 2f) })
+    }
+
+    /** Fits the whole front-camera picture in the window. No stretch, no digital zoom. */
+    private fun configureTransform() {
+        val viewW = preview.width
+        val viewH = preview.height
+        if (viewW == 0 || viewH == 0) return
+        val matrix = Matrix()
+        val viewRect = RectF(0f, 0f, viewW.toFloat(), viewH.toFloat())
+        val bufferRect = RectF(0f, 0f, videoSize.height.toFloat(), videoSize.width.toFloat())
+        val cx = viewRect.centerX()
+        val cy = viewRect.centerY()
+        bufferRect.offset(cx - bufferRect.centerX(), cy - bufferRect.centerY())
+        matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.CENTER)
+        val rotation = surfaceRotation()
+        if (rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270) {
+            matrix.postRotate(90f * (rotation - 2), cx, cy)
+        } else if (rotation == Surface.ROTATION_180) {
+            matrix.postRotate(180f, cx, cy)
+        } else {
+            matrix.postRotate(sensorOrientation.toFloat(), cx, cy)
+        }
+        if (front) matrix.postScale(-1f, 1f, cx, cy)
+        preview.setTransform(matrix)
     }
 
     private fun flip() {
@@ -474,11 +524,7 @@ class MainActivity : AppCompatActivity() {
                     val request = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                         addTarget(previewSurface)
                         addTarget(recordSurface)
-                        set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                        set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                            set(CaptureRequest.CONTROL_ZOOM_RATIO, minZoom)
-                        }
+                        applyWideView()
                     }
                     capture.setRepeatingRequest(request.build(), null, handler)
                     rec.start()
@@ -534,19 +580,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun displayRotationDegrees(): Int = when (surfaceRotation()) {
+        Surface.ROTATION_90 -> 90
+        Surface.ROTATION_180 -> 180
+        Surface.ROTATION_270 -> 270
+        else -> 0
+    }
+
+    private fun surfaceRotation(): Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        display?.rotation ?: Surface.ROTATION_0
+    } else {
+        @Suppress("DEPRECATION")
+        windowManager.defaultDisplay.rotation
+    }
+
     private fun orientationHint(): Int {
-        val rotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            display?.rotation ?: Surface.ROTATION_0
-        } else {
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.rotation
-        }
-        val degrees = when (rotation) {
-            Surface.ROTATION_90 -> 90
-            Surface.ROTATION_180 -> 180
-            Surface.ROTATION_270 -> 270
-            else -> 0
-        }
+        val degrees = displayRotationDegrees()
         val hint = if (front) {
             (sensorOrientation + degrees) % 360
         } else {

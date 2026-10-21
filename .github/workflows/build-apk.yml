@@ -30,14 +30,14 @@ jobs:
       - name: Build version 1.0
         run: gradle assembleDebug --no-daemon
       - name: Name the APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk AutoCam-1.1.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk AutoCam-1.2.apk
       - name: Publish Auto Cam 1.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.0
-          name: Auto Cam 1.1
+          tag_name: v1.2.0
+          name: Auto Cam 1.2
           body: |
-            Install AutoCam-1.1.apk. It matches the Auto Cam screen, icon, and portrait and landscape layout.
-            Recording still uses the camcorder microphone.
-          files: AutoCam-1.1.apk
+            Install AutoCam-1.2.apk.
+            The front camera stays fully zoomed out, and the preview is no longer stretched.
+          files: AutoCam-1.2.apk
           fail_on_unmatched_files: true
