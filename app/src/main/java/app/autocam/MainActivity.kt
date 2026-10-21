@@ -24,8 +24,13 @@ import android.util.Size
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
-import android.widget.Button
+import android.view.ViewGroup
+import android.view.ViewOutlineProvider
+import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.Space
 import android.widget.TextView
 import android.widget.VideoView
 import androidx.appcompat.app.AppCompatActivity
@@ -38,40 +43,63 @@ import java.io.File
 import kotlin.math.abs
 
 class MainActivity : AppCompatActivity() {
+    private enum class Screen { HOME, LIVE, REVIEW }
+
+    private lateinit var home: View
+    private lateinit var live: FrameLayout
+    private lateinit var liveStage: FrameLayout
+    private lateinit var review: View
     private lateinit var preview: TextureView
-    private lateinit var playback: VideoView
-    private lateinit var frame: View
-    private lateinit var recBadge: LinearLayout
+    private lateinit var previewCard: AspectFrameLayout
+    private lateinit var previewLockup: ImageView
+    private lateinit var recBadge: View
     private lateinit var recDot: View
     private lateinit var timer: TextView
-    private lateinit var side: LinearLayout
-    private lateinit var sidePrimary: Button
-    private lateinit var sideSecondary: Button
-    private lateinit var sidePrimaryLabel: TextView
-    private lateinit var sideSecondaryLabel: TextView
-    private lateinit var bottom: LinearLayout
-    private lateinit var bottomPrimary: Button
-    private lateinit var bottomSecondary: Button
+    private lateinit var sideColumn: View
+    private lateinit var sideSpacer: View
+    private lateinit var rowRecord: View
+    private lateinit var rowEnd: View
+    private lateinit var statusText: TextView
+    private lateinit var hint: TextView
+    private lateinit var openCameraButton: TextView
+    private lateinit var liveFrame: View
+    private lateinit var liveBadge: View
+    private lateinit var liveDot: View
+    private lateinit var liveTimer: TextView
+    private lateinit var liveSide: View
+    private lateinit var liveStatus: TextView
+    private lateinit var shutterCore: View
+    private lateinit var reviewLockup: View
+    private lateinit var reviewTitle: View
+    private lateinit var reviewSide: View
+    private lateinit var reviewSpacer: View
+    private lateinit var reviewButtons: View
+    private lateinit var reviewCard: AspectFrameLayout
+    private lateinit var playback: VideoView
     private lateinit var message: TextView
 
+    private var screen = Screen.HOME
+    private var front = true
     private var camera: CameraDevice? = null
     private var session: CameraCaptureSession? = null
     private var recorder: MediaRecorder? = null
     private var recording = false
-    private var reviewing = false
     private var clip: File? = null
     private var videoSize = Size(1920, 1080)
     private var sensorOrientation = 270
+    private var minZoom = 1f
     private var startedAt = 0L
-    private var pulse: ObjectAnimator? = null
+    private var pulseHome: ObjectAnimator? = null
+    private var pulseLive: ObjectAnimator? = null
     private val tick = object : Runnable {
         override fun run() {
             if (!recording) return
-            timer.text = clock(SystemClock.elapsedRealtime() - startedAt)
+            val text = clock(SystemClock.elapsedRealtime() - startedAt)
+            timer.text = text
+            liveTimer.text = text
             timer.postDelayed(this, 200)
         }
     }
-
     private var thread: HandlerThread? = null
     private var handler: Handler? = null
 
@@ -83,29 +111,15 @@ class MainActivity : AppCompatActivity() {
             hide(WindowInsetsCompat.Type.systemBars())
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
-        preview = findViewById(R.id.preview)
-        playback = findViewById(R.id.playback)
-        frame = findViewById(R.id.frame)
-        recBadge = findViewById(R.id.recBadge)
-        recDot = findViewById(R.id.recDot)
-        timer = findViewById(R.id.timer)
-        side = findViewById(R.id.side)
-        sidePrimary = findViewById(R.id.sidePrimary)
-        sideSecondary = findViewById(R.id.sideSecondary)
-        sidePrimaryLabel = findViewById(R.id.sidePrimaryLabel)
-        sideSecondaryLabel = findViewById(R.id.sideSecondaryLabel)
-        bottom = findViewById(R.id.bottom)
-        bottomPrimary = findViewById(R.id.bottomPrimary)
-        bottomSecondary = findViewById(R.id.bottomSecondary)
-        message = findViewById(R.id.message)
-
-        sidePrimary.setOnClickListener { onPrimary() }
-        bottomPrimary.setOnClickListener { onPrimary() }
-        sideSecondary.setOnClickListener { onSecondary() }
-        bottomSecondary.setOnClickListener { onSecondary() }
+        bindViews()
+        previewCard.clipToOutline = true
+        previewCard.outlineProvider = ViewOutlineProvider.BACKGROUND
+        reviewCard.clipToOutline = true
+        reviewCard.outlineProvider = ViewOutlineProvider.BACKGROUND
         preview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
-                openCamera()
+                if (screen == Screen.REVIEW) return
+                if (camera != null) startPreview() else openCamera()
             }
             override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
                 mirrorPreview()
@@ -113,18 +127,73 @@ class MainActivity : AppCompatActivity() {
             override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture) = true
             override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) {}
         }
-        showCameraChrome()
+        findViewById<View>(R.id.lockup).setOnClickListener { finish() }
+        previewLockup.setOnClickListener { finish() }
+        reviewLockup.setOnClickListener { finish() }
+        findViewById<View>(R.id.btnOpen).setOnClickListener { showLive() }
+        openCameraButton.setOnClickListener { showLive() }
+        findViewById<View>(R.id.btnRecord).setOnClickListener { startRecording() }
+        findViewById<View>(R.id.sideStart).setOnClickListener { startRecording() }
+        findViewById<View>(R.id.liveStart).setOnClickListener { startRecording() }
+        findViewById<View>(R.id.btnEnd).setOnClickListener { if (recording) stopRecording() }
+        findViewById<View>(R.id.sideEnd).setOnClickListener { if (recording) stopRecording() }
+        findViewById<View>(R.id.liveEnd).setOnClickListener { if (recording) stopRecording() }
+        findViewById<View>(R.id.shutter).setOnClickListener {
+            if (recording) stopRecording() else startRecording()
+        }
+        findViewById<View>(R.id.flip).setOnClickListener { flip() }
+        findViewById<View>(R.id.closeLive).setOnClickListener { finish() }
+        findViewById<View>(R.id.save).setOnClickListener { saveClip() }
+        findViewById<View>(R.id.sideSave).setOnClickListener { saveClip() }
+        findViewById<View>(R.id.delete).setOnClickListener { deleteClip() }
+        findViewById<View>(R.id.sideDelete).setOnClickListener { deleteClip() }
+        showHome()
+    }
+
+    private fun bindViews() {
+        home = findViewById(R.id.home)
+        live = findViewById(R.id.live)
+        liveStage = findViewById(R.id.liveStage)
+        review = findViewById(R.id.review)
+        preview = findViewById(R.id.preview)
+        previewCard = findViewById(R.id.previewCard)
+        previewLockup = findViewById(R.id.previewLockup)
+        recBadge = findViewById(R.id.recBadge)
+        recDot = findViewById(R.id.recDot)
+        timer = findViewById(R.id.timer)
+        sideColumn = findViewById(R.id.sideColumn)
+        sideSpacer = findViewById(R.id.sideSpacer)
+        rowRecord = findViewById(R.id.rowRecord)
+        rowEnd = findViewById(R.id.rowEnd)
+        statusText = findViewById(R.id.statusText)
+        hint = findViewById(R.id.hint)
+        openCameraButton = findViewById(R.id.openCamera)
+        liveFrame = findViewById(R.id.liveFrame)
+        liveBadge = findViewById(R.id.liveBadge)
+        liveDot = findViewById(R.id.liveDot)
+        liveTimer = findViewById(R.id.liveTimer)
+        liveSide = findViewById(R.id.liveSide)
+        liveStatus = findViewById(R.id.liveStatus)
+        shutterCore = findViewById(R.id.shutterCore)
+        reviewLockup = findViewById(R.id.reviewLockup)
+        reviewTitle = findViewById(R.id.reviewTitle)
+        reviewSide = findViewById(R.id.reviewSide)
+        reviewSpacer = findViewById(R.id.reviewSpacer)
+        reviewButtons = findViewById(R.id.reviewButtons)
+        reviewCard = findViewById(R.id.reviewCard)
+        playback = findViewById(R.id.playback)
+        message = findViewById(R.id.message)
     }
 
     override fun onResume() {
         super.onResume()
         startThread()
-        if (hasPermissions() && preview.isAvailable && !reviewing) openCamera()
-        else if (!hasPermissions()) requestPermissions()
+        if (!hasPermissions()) requestPermissions()
+        else if (screen != Screen.REVIEW && preview.isAvailable) openCamera()
     }
 
     override fun onPause() {
-        if (recording) stopRecording(showReview = true)
+        if (recording) stopRecording()
         closeCamera()
         stopThread()
         super.onPause()
@@ -132,7 +201,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        showChrome()
+        applyChrome()
     }
 
     private fun landscape() =
@@ -154,63 +223,106 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (hasPermissions()) {
             message.visibility = View.GONE
-            if (preview.isAvailable) openCamera()
+            if (preview.isAvailable && screen != Screen.REVIEW) openCamera()
         } else {
             say("Allow the camera and microphone, then open Auto Cam again.")
         }
     }
 
-    private fun onPrimary() {
-        if (reviewing) saveClip()
-        else if (!recording) startRecording()
+    private fun showHome() {
+        screen = Screen.HOME
+        mountPreview(previewCard)
+        home.visibility = View.VISIBLE
+        live.visibility = View.GONE
+        review.visibility = View.GONE
+        applyChrome()
+        if (hasPermissions() && preview.isAvailable) openCamera()
     }
 
-    private fun onSecondary() {
-        if (reviewing) deleteClip()
-        else if (recording) stopRecording(showReview = true)
+    private fun showLive() {
+        if (screen == Screen.REVIEW) return
+        screen = Screen.LIVE
+        mountPreview(liveStage)
+        home.visibility = View.GONE
+        live.visibility = View.VISIBLE
+        review.visibility = View.GONE
+        applyChrome()
+        if (camera != null && preview.isAvailable) startPreview()
+        else if (preview.isAvailable) openCamera()
     }
 
-    private fun showChrome() {
-        if (reviewing) showReviewChrome() else showCameraChrome()
+    private fun showReview() {
+        screen = Screen.REVIEW
+        home.visibility = View.GONE
+        live.visibility = View.GONE
+        review.visibility = View.VISIBLE
+        playback.setVideoPath(clip!!.absolutePath)
+        playback.setOnPreparedListener {
+            it.isLooping = true
+            playback.start()
+        }
+        playback.start()
+        applyChrome()
     }
 
-    private fun showCameraChrome() {
+    private fun mountPreview(into: FrameLayout) {
+        val parent = preview.parent as? ViewGroup
+        if (parent === into) return
+        parent?.removeView(preview)
+        into.addView(
+            preview,
+            0,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+    }
+
+    private fun applyChrome() {
         val land = landscape()
-        side.visibility = if (land) View.VISIBLE else View.GONE
-        bottom.visibility = if (land) View.GONE else View.VISIBLE
-        sidePrimary.text = "●"
-        sidePrimary.setTextColor(ContextCompat.getColor(this, R.color.rec))
-        sidePrimaryLabel.text = "Start"
-        sideSecondary.text = "■"
-        sideSecondaryLabel.text = "End"
-        sideSecondary.isEnabled = recording
-        bottomPrimary.text = if (recording) "■" else "●"
-        bottomPrimary.setTextColor(ContextCompat.getColor(this, if (recording) R.color.cream else R.color.rec))
-        bottomSecondary.visibility = View.GONE
-        playback.visibility = View.GONE
-        preview.visibility = View.VISIBLE
-        frame.background = if (recording) ContextCompat.getDrawable(this, R.drawable.stroke_red) else null
-        recBadge.visibility = if (recording) View.VISIBLE else View.GONE
-    }
+        val onHome = screen == Screen.HOME
+        sideColumn.visibility = if (land && onHome) View.VISIBLE else View.GONE
+        sideSpacer.visibility = if (land && onHome) View.VISIBLE else View.GONE
+        rowRecord.visibility = if (land) View.GONE else View.VISIBLE
+        rowEnd.visibility = if (land) View.GONE else View.VISIBLE
+        previewLockup.visibility = if (camera == null && !recording) View.VISIBLE else View.GONE
+        previewCard.setBackgroundResource(if (recording && onHome) R.drawable.card_rec else R.drawable.card_round)
+        recBadge.visibility = if (recording && onHome) View.VISIBLE else View.GONE
+        statusText.text = if (recording) "RECORDING" else "READY"
+        statusText.setTextColor(ContextCompat.getColor(this, if (recording) R.color.rec else R.color.muted))
+        hint.text = if (recording) "Tap the square to stop." else "Use the buttons to open the camera and record."
+        findViewById<View>(R.id.btnRecord).isEnabled = !recording
+        findViewById<View>(R.id.sideStart).isEnabled = !recording
+        findViewById<View>(R.id.btnEnd).isEnabled = recording
+        findViewById<View>(R.id.sideEnd).isEnabled = recording
+        findViewById<View>(R.id.btnRecord).alpha = if (recording) 0.4f else 1f
+        findViewById<View>(R.id.sideStart).alpha = if (recording) 0.4f else 1f
+        findViewById<View>(R.id.btnEnd).alpha = if (recording) 1f else 0.4f
+        findViewById<View>(R.id.sideEnd).alpha = if (recording) 1f else 0.4f
 
-    private fun showReviewChrome() {
-        val land = landscape()
-        side.visibility = if (land) View.VISIBLE else View.GONE
-        bottom.visibility = if (land) View.GONE else View.VISIBLE
-        sidePrimary.text = "↓"
-        sidePrimary.setTextColor(ContextCompat.getColor(this, R.color.cream))
-        sidePrimaryLabel.text = "Save"
-        sideSecondary.text = "✕"
-        sideSecondaryLabel.text = "Delete"
-        sideSecondary.isEnabled = true
-        bottomPrimary.text = "Save"
-        bottomPrimary.setTextColor(ContextCompat.getColor(this, R.color.cream))
-        bottomSecondary.visibility = View.VISIBLE
-        bottomSecondary.text = "Delete"
-        preview.visibility = View.GONE
-        playback.visibility = View.VISIBLE
-        frame.background = ContextCompat.getDrawable(this, R.drawable.stroke_green)
-        recBadge.visibility = View.GONE
+        val onLive = screen == Screen.LIVE
+        liveSide.visibility = if (land && onLive) View.VISIBLE else View.GONE
+        liveBadge.visibility = if (recording && onLive) View.VISIBLE else View.GONE
+        liveFrame.background = if (recording && onLive) ContextCompat.getDrawable(this, R.drawable.stroke_red) else null
+        liveStatus.text = if (recording) "Recording" else "Ready"
+        findViewById<View>(R.id.liveStart).isEnabled = !recording
+        findViewById<View>(R.id.liveEnd).isEnabled = recording
+        findViewById<View>(R.id.liveStart).alpha = if (recording) 0.4f else 1f
+        findViewById<View>(R.id.liveEnd).alpha = if (recording) 1f else 0.4f
+        findViewById<View>(R.id.flip).isEnabled = !recording
+        findViewById<View>(R.id.flip).alpha = if (recording) 0.4f else 1f
+        val core = if (recording) 28 else 56
+        val px = (core * resources.displayMetrics.density).toInt()
+        shutterCore.layoutParams = FrameLayout.LayoutParams(px, px).apply { gravity = android.view.Gravity.CENTER }
+        shutterCore.setBackgroundResource(if (recording) R.drawable.shutter_stop else R.drawable.shutter_dot)
+
+        val onReview = screen == Screen.REVIEW
+        reviewLockup.visibility = if (land) View.GONE else View.VISIBLE
+        reviewTitle.visibility = if (land) View.GONE else View.VISIBLE
+        reviewSide.visibility = if (land && onReview) View.VISIBLE else View.GONE
+        reviewSpacer.visibility = if (land && onReview) View.VISIBLE else View.GONE
+        reviewButtons.visibility = if (land) View.GONE else View.VISIBLE
     }
 
     private fun say(text: String) {
@@ -231,20 +343,27 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openCamera() {
-        if (!hasPermissions() || reviewing || camera != null) return
+        if (!hasPermissions() || screen == Screen.REVIEW || camera != null) return
         val manager = getSystemService(CAMERA_SERVICE) as CameraManager
-        val id = frontCamera(manager) ?: run {
-            say("No front camera on this phone.")
+        val id = cameraId(manager) ?: run {
+            say("No camera on this phone.")
             return
         }
         val chars = manager.getCameraCharacteristics(id)
         sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 270
+        minZoom = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            chars.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.lower ?: 1f
+        } else 1f
         videoSize = chooseSize(chars)
         message.visibility = View.GONE
         try {
             manager.openCamera(id, object : CameraDevice.StateCallback() {
                 override fun onOpened(device: CameraDevice) {
                     camera = device
+                    runOnUiThread {
+                        previewLockup.visibility = View.GONE
+                        applyChrome()
+                    }
                     startPreview()
                 }
                 override fun onDisconnected(device: CameraDevice) {
@@ -262,11 +381,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun frontCamera(manager: CameraManager): String? {
+    private fun cameraId(manager: CameraManager): String? {
+        val want = if (front) CameraCharacteristics.LENS_FACING_FRONT else CameraCharacteristics.LENS_FACING_BACK
         val ids = manager.cameraIdList
         return ids.firstOrNull {
-            manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) ==
-                CameraCharacteristics.LENS_FACING_FRONT
+            manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == want
         } ?: ids.firstOrNull()
     }
 
@@ -276,26 +395,35 @@ class MainActivity : AppCompatActivity() {
         if (sizes.isEmpty()) return Size(1280, 720)
         return sizes
             .filter { it.width <= 1920 && it.height <= 1080 }
-            .minByOrNull { abs(it.width.toFloat() / it.height - 16f / 9f) + (1920 - it.width) / 1920f }
+            .minByOrNull { abs(it.width.toFloat() / it.height - 16f / 9f) }
             ?: sizes.maxBy { it.width * it.height }
     }
 
     private fun startPreview() {
         val device = camera ?: return
+        if (recording) return
         val texture = preview.surfaceTexture ?: return
         texture.setDefaultBufferSize(videoSize.width, videoSize.height)
         mirrorPreview()
         val surface = Surface(texture)
+        closeSession()
         try {
             device.createCaptureSession(listOf(surface), object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(capture: CameraCaptureSession) {
+                    if (camera == null) return
                     session = capture
-                    val request = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+                    val request = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                         addTarget(surface)
                         set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                         set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            set(CaptureRequest.CONTROL_ZOOM_RATIO, minZoom)
+                        }
                     }
-                    capture.setRepeatingRequest(request.build(), null, handler)
+                    try {
+                        capture.setRepeatingRequest(request.build(), null, handler)
+                    } catch (_: Exception) {
+                    }
                 }
                 override fun onConfigureFailed(capture: CameraCaptureSession) {
                     runOnUiThread { say("The preview didn’t start.") }
@@ -307,21 +435,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun mirrorPreview() {
+        if (!front) {
+            preview.setTransform(Matrix())
+            return
+        }
         val viewWidth = preview.width.toFloat()
         val viewHeight = preview.height.toFloat()
         if (viewWidth == 0f || viewHeight == 0f) return
-        val matrix = Matrix()
-        matrix.setScale(-1f, 1f, viewWidth / 2f, viewHeight / 2f)
-        preview.setTransform(matrix)
+        preview.setTransform(Matrix().apply { setScale(-1f, 1f, viewWidth / 2f, viewHeight / 2f) })
+    }
+
+    private fun flip() {
+        if (recording || screen != Screen.LIVE) return
+        front = !front
+        closeCamera()
+        openCamera()
     }
 
     private fun startRecording() {
         val device = camera ?: return
-        if (recording) return
+        if (recording || screen == Screen.REVIEW) return
         closeSession()
         val file = File(cacheDir, "autocam-${System.currentTimeMillis()}.mp4")
-        val made = prepareRecorder(file, stereo = true) || prepareRecorder(file, stereo = false)
-        if (!made) {
+        if (!prepareRecorder(file, true) && !prepareRecorder(file, false)) {
             say("Couldn’t start the camcorder microphone.")
             startPreview()
             return
@@ -340,6 +476,9 @@ class MainActivity : AppCompatActivity() {
                         addTarget(recordSurface)
                         set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                         set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            set(CaptureRequest.CONTROL_ZOOM_RATIO, minZoom)
+                        }
                     }
                     capture.setRepeatingRequest(request.build(), null, handler)
                     rec.start()
@@ -348,14 +487,10 @@ class MainActivity : AppCompatActivity() {
                         recording = true
                         startedAt = SystemClock.elapsedRealtime()
                         timer.text = "0:00"
-                        pulse = ObjectAnimator.ofFloat(recDot, View.ALPHA, 1f, 0.25f).apply {
-                            duration = 700
-                            repeatMode = ValueAnimator.REVERSE
-                            repeatCount = ValueAnimator.INFINITE
-                            start()
-                        }
+                        liveTimer.text = "0:00"
+                        startPulse()
                         timer.post(tick)
-                        showCameraChrome()
+                        applyChrome()
                     }
                 }
                 override fun onConfigureFailed(capture: CameraCaptureSession) {
@@ -412,16 +547,20 @@ class MainActivity : AppCompatActivity() {
             Surface.ROTATION_270 -> 270
             else -> 0
         }
-        var hint = (sensorOrientation + degrees) % 360
-        hint = (360 - hint) % 360
-        return hint
+        val hint = if (front) {
+            (sensorOrientation + degrees) % 360
+        } else {
+            (sensorOrientation - degrees + 360) % 360
+        }
+        return if (front) (360 - hint) % 360 else hint
     }
 
-    private fun stopRecording(showReview: Boolean) {
+    private fun stopRecording() {
         if (!recording) return
         recording = false
         timer.removeCallbacks(tick)
-        pulse?.cancel()
+        pulseHome?.cancel()
+        pulseLive?.cancel()
         try {
             recorder?.stop()
         } catch (_: Exception) {
@@ -430,16 +569,27 @@ class MainActivity : AppCompatActivity() {
         }
         releaseRecorder()
         closeSession()
-        if (showReview && clip != null && clip!!.length() > 0) {
-            reviewing = true
-            playback.setVideoPath(clip!!.absolutePath)
-            playback.setOnPreparedListener { it.isLooping = true; playback.start() }
-            showReviewChrome()
+        if (clip != null && clip!!.length() > 0) {
+            closeCamera()
+            showReview()
         } else {
-            reviewing = false
-            showCameraChrome()
+            applyChrome()
             startPreview()
         }
+    }
+
+    private fun startPulse() {
+        pulseHome?.cancel()
+        pulseLive?.cancel()
+        pulseHome = pulse(recDot)
+        pulseLive = pulse(liveDot)
+    }
+
+    private fun pulse(view: View) = ObjectAnimator.ofFloat(view, View.ALPHA, 1f, 0.25f).apply {
+        duration = 700
+        repeatMode = ValueAnimator.REVERSE
+        repeatCount = ValueAnimator.INFINITE
+        start()
     }
 
     private fun saveClip() {
@@ -451,8 +601,7 @@ class MainActivity : AppCompatActivity() {
             put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/AutoCam")
             put(MediaStore.Video.Media.IS_PENDING, 1)
         }
-        val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-        if (uri == null) {
+        val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: run {
             say("Couldn’t save to the gallery.")
             return
         }
@@ -460,24 +609,17 @@ class MainActivity : AppCompatActivity() {
         values.clear()
         values.put(MediaStore.Video.Media.IS_PENDING, 0)
         contentResolver.update(uri, values, null, null)
+        playback.stopPlayback()
         file.delete()
         clip = null
-        finishReview()
+        showHome()
     }
 
     private fun deleteClip() {
         playback.stopPlayback()
         clip?.delete()
         clip = null
-        finishReview()
-    }
-
-    private fun finishReview() {
-        reviewing = false
-        playback.visibility = View.GONE
-        preview.visibility = View.VISIBLE
-        showCameraChrome()
-        if (camera != null) startPreview() else openCamera()
+        showHome()
     }
 
     private fun closeSession() {

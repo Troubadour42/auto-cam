@@ -30,14 +30,14 @@ jobs:
       - name: Build version 1.0
         run: gradle assembleDebug --no-daemon
       - name: Name the APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk AutoCam-1.0.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk AutoCam-1.1.apk
       - name: Publish Auto Cam 1.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: Auto Cam 1.0
+          tag_name: v1.1.0
+          name: Auto Cam 1.1
           body: |
-            Install AutoCam-1.0.apk on your Samsung phone.
-            This build records with the camcorder microphone, the same Android mic path as the Samsung Camera app, not the phone-call microphone.
-          files: AutoCam-1.0.apk
+            Install AutoCam-1.1.apk. It matches the Auto Cam screen, icon, and portrait and landscape layout.
+            Recording still uses the camcorder microphone.
+          files: AutoCam-1.1.apk
           fail_on_unmatched_files: true

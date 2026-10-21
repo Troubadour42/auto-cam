@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <color name="bg">#0E0D0C</color>
     <color name="cream">#F4EFE6</color>
+    <color name="muted">#9C9488</color>
     <color name="rec">#FF3B30</color>
     <color name="play">#34C759</color>
-    <color name="ink">#111111</color>
+    <color name="ink">#0E0D0C</color>
 </resources>
