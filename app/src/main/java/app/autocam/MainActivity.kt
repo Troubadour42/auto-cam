@@ -6,7 +6,15 @@ import android.animation.ValueAnimator
 import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.content.Intent
+import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.os.Environment
 import android.os.SystemClock
 import android.provider.MediaStore
@@ -14,6 +22,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.VideoView
@@ -49,9 +58,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var preview: PreviewView
     private lateinit var previewCard: AspectFrameLayout
     private lateinit var previewLockup: ImageView
-    private lateinit var recBadge: View
     private lateinit var recDot: View
     private lateinit var timer: TextView
+    private lateinit var sideClock: View
+    private lateinit var portraitClock: View
+    private lateinit var portraitDot: View
+    private lateinit var portraitTimer: TextView
     private lateinit var sideColumn: View
     private lateinit var sideSpacer: View
     private lateinit var rowRecord: View
@@ -60,9 +72,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var hint: TextView
     private lateinit var openCameraButton: TextView
     private lateinit var liveFrame: View
-    private lateinit var liveBadge: View
+    private lateinit var liveClock: View
     private lateinit var liveDot: View
     private lateinit var liveTimer: TextView
+    private lateinit var livePortraitClock: View
+    private lateinit var livePortraitDot: View
+    private lateinit var livePortraitTimer: TextView
     private lateinit var liveSide: View
     private lateinit var liveStatus: TextView
     private lateinit var shutterCore: View
@@ -73,6 +88,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var reviewButtons: View
     private lateinit var reviewCard: AspectFrameLayout
     private lateinit var playback: VideoView
+    private lateinit var pauseButton: ImageButton
     private lateinit var message: TextView
 
     private var screen = Screen.HOME
@@ -85,13 +101,22 @@ class MainActivity : AppCompatActivity() {
     private var activeRecording: Recording? = null
     private var startedAt = 0L
     private var pulseHome: ObjectAnimator? = null
+    private var pulsePortrait: ObjectAnimator? = null
     private var pulseLive: ObjectAnimator? = null
+    private var pulseLivePortrait: ObjectAnimator? = null
+    private var speech: SpeechRecognizer? = null
+    private var voiceWanted = false
+    private var voiceHeard = false
+    private val voiceHandler = Handler(Looper.getMainLooper())
+    private val restartVoice = Runnable { if (voiceWanted && !recording) listen() }
     private val tick = object : Runnable {
         override fun run() {
             if (!recording) return
             val text = clock(SystemClock.elapsedRealtime() - startedAt)
             timer.text = text
+            portraitTimer.text = text
             liveTimer.text = text
+            livePortraitTimer.text = text
             timer.postDelayed(this, 200)
         }
     }
@@ -131,6 +156,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.sideSave).setOnClickListener { saveClip() }
         findViewById<View>(R.id.delete).setOnClickListener { deleteClip() }
         findViewById<View>(R.id.sideDelete).setOnClickListener { deleteClip() }
+        pauseButton.setOnClickListener { togglePause() }
         showHome()
     }
 
@@ -142,9 +168,12 @@ class MainActivity : AppCompatActivity() {
         preview = findViewById(R.id.preview)
         previewCard = findViewById(R.id.previewCard)
         previewLockup = findViewById(R.id.previewLockup)
-        recBadge = findViewById(R.id.recBadge)
         recDot = findViewById(R.id.recDot)
         timer = findViewById(R.id.timer)
+        sideClock = findViewById(R.id.sideClock)
+        portraitClock = findViewById(R.id.portraitClock)
+        portraitDot = findViewById(R.id.portraitDot)
+        portraitTimer = findViewById(R.id.portraitTimer)
         sideColumn = findViewById(R.id.sideColumn)
         sideSpacer = findViewById(R.id.sideSpacer)
         rowRecord = findViewById(R.id.rowRecord)
@@ -153,9 +182,12 @@ class MainActivity : AppCompatActivity() {
         hint = findViewById(R.id.hint)
         openCameraButton = findViewById(R.id.openCamera)
         liveFrame = findViewById(R.id.liveFrame)
-        liveBadge = findViewById(R.id.liveBadge)
+        liveClock = findViewById(R.id.liveClock)
         liveDot = findViewById(R.id.liveDot)
         liveTimer = findViewById(R.id.liveTimer)
+        livePortraitClock = findViewById(R.id.livePortraitClock)
+        livePortraitDot = findViewById(R.id.livePortraitDot)
+        livePortraitTimer = findViewById(R.id.livePortraitTimer)
         liveSide = findViewById(R.id.liveSide)
         liveStatus = findViewById(R.id.liveStatus)
         shutterCore = findViewById(R.id.shutterCore)
@@ -166,6 +198,7 @@ class MainActivity : AppCompatActivity() {
         reviewButtons = findViewById(R.id.reviewButtons)
         reviewCard = findViewById(R.id.reviewCard)
         playback = findViewById(R.id.playback)
+        pauseButton = findViewById(R.id.pause)
         message = findViewById(R.id.message)
     }
 
@@ -173,11 +206,21 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (!hasPermissions()) requestPermissions()
         else if (screen != Screen.REVIEW) openCamera()
+        syncVoice()
     }
 
     override fun onPause() {
         if (recording) stopRecording() else closeCamera()
+        stopVoice()
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        stopVoice()
+        speech?.destroy()
+        speech = null
+        restoreSound()
+        super.onDestroy()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -205,6 +248,7 @@ class MainActivity : AppCompatActivity() {
         if (hasPermissions()) {
             message.visibility = View.GONE
             if (screen != Screen.REVIEW) openCamera()
+            syncVoice()
         } else {
             say("Allow the camera and microphone, then open Auto Cam again.")
         }
@@ -242,7 +286,9 @@ class MainActivity : AppCompatActivity() {
             playback.start()
         }
         playback.start()
+        showPauseIcon(playing = true)
         applyChrome()
+        syncVoice()
     }
 
     private fun mountPreview(into: FrameLayout) {
@@ -268,7 +314,10 @@ class MainActivity : AppCompatActivity() {
         rowEnd.visibility = if (land) View.GONE else View.VISIBLE
         previewLockup.visibility = if (!cameraReady && !recording) View.VISIBLE else View.GONE
         previewCard.setBackgroundResource(if (recording && onHome) R.drawable.card_rec else R.drawable.card_round)
-        recBadge.visibility = if (recording && onHome) View.VISIBLE else View.GONE
+        val showSideClock = recording && land && onHome
+        val showPortraitClock = recording && !land && onHome
+        sideClock.visibility = if (showSideClock) View.VISIBLE else View.GONE
+        portraitClock.visibility = if (showPortraitClock) View.VISIBLE else View.GONE
         statusText.text = if (recording) "RECORDING" else "READY"
         statusText.setTextColor(ContextCompat.getColor(this, if (recording) R.color.rec else R.color.muted))
         hint.text = if (recording) "Tap the square to stop." else "Use the buttons to open the camera and record."
@@ -283,7 +332,8 @@ class MainActivity : AppCompatActivity() {
 
         val onLive = screen == Screen.LIVE
         liveSide.visibility = if (land && onLive) View.VISIBLE else View.GONE
-        liveBadge.visibility = if (recording && onLive) View.VISIBLE else View.GONE
+        liveClock.visibility = if (recording && land && onLive) View.VISIBLE else View.GONE
+        livePortraitClock.visibility = if (recording && !land && onLive) View.VISIBLE else View.GONE
         liveFrame.background = if (recording && onLive) ContextCompat.getDrawable(this, R.drawable.stroke_red) else null
         liveStatus.text = if (recording) "Recording" else "Ready"
         findViewById<View>(R.id.liveStart).isEnabled = !recording
@@ -303,6 +353,7 @@ class MainActivity : AppCompatActivity() {
         reviewSide.visibility = if (land && onReview) View.VISIBLE else View.GONE
         reviewSpacer.visibility = if (land && onReview) View.VISIBLE else View.GONE
         reviewButtons.visibility = if (land) View.GONE else View.VISIBLE
+        syncVoice()
     }
 
     private fun say(text: String) {
@@ -365,6 +416,7 @@ class MainActivity : AppCompatActivity() {
     private fun startRecording() {
         val video = videoCapture ?: return
         if (recording || screen == Screen.REVIEW) return
+        stopVoice()
         val file = File(cacheDir, "autocam-${System.currentTimeMillis()}.mp4")
         val options = FileOutputOptions.Builder(file).build()
         activeRecording = video.output
@@ -377,7 +429,9 @@ class MainActivity : AppCompatActivity() {
                         recording = true
                         startedAt = SystemClock.elapsedRealtime()
                         timer.text = "0:00"
+                        portraitTimer.text = "0:00"
                         liveTimer.text = "0:00"
+                        livePortraitTimer.text = "0:00"
                         startPulse()
                         timer.post(tick)
                         applyChrome()
@@ -386,7 +440,9 @@ class MainActivity : AppCompatActivity() {
                         recording = false
                         timer.removeCallbacks(tick)
                         pulseHome?.cancel()
+                        pulsePortrait?.cancel()
                         pulseLive?.cancel()
+                        pulseLivePortrait?.cancel()
                         activeRecording = null
                         if (!event.hasError() && file.length() > 0) {
                             clip = file
@@ -410,9 +466,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun startPulse() {
         pulseHome?.cancel()
+        pulsePortrait?.cancel()
         pulseLive?.cancel()
+        pulseLivePortrait?.cancel()
         pulseHome = pulse(recDot)
+        pulsePortrait = pulse(portraitDot)
         pulseLive = pulse(liveDot)
+        pulseLivePortrait = pulse(livePortraitDot)
     }
 
     private fun pulse(view: View) = ObjectAnimator.ofFloat(view, View.ALPHA, 1f, 0.25f).apply {
@@ -458,6 +518,136 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {
         }
         cameraReady = false
+    }
+
+    private fun togglePause() {
+        if (screen != Screen.REVIEW) return
+        if (playback.isPlaying) {
+            playback.pause()
+            showPauseIcon(playing = false)
+        } else {
+            playback.start()
+            showPauseIcon(playing = true)
+        }
+    }
+
+    private fun showPauseIcon(playing: Boolean) {
+        pauseButton.setImageResource(if (playing) R.drawable.ic_pause else R.drawable.ic_play)
+        pauseButton.contentDescription = if (playing) "Pause" else "Play"
+    }
+
+    private val voiceListener = object : RecognitionListener {
+        override fun onReadyForSpeech(params: Bundle?) { voiceHeard = false }
+        override fun onBeginningOfSpeech() {}
+        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onBufferReceived(buffer: ByteArray?) {}
+        override fun onEndOfSpeech() {}
+        override fun onError(error: Int) {
+            if (!voiceWanted || recording) return
+            voiceHandler.removeCallbacks(restartVoice)
+            voiceHandler.postDelayed(restartVoice, 400)
+        }
+        override fun onResults(results: Bundle?) {
+            results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.forEach(::onHeard)
+            if (voiceWanted && !recording) {
+                voiceHandler.removeCallbacks(restartVoice)
+                voiceHandler.postDelayed(restartVoice, 250)
+            }
+        }
+        override fun onPartialResults(partial: Bundle?) {
+            partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.forEach(::onHeard)
+        }
+        override fun onEvent(eventType: Int, params: Bundle?) {}
+    }
+
+    private fun syncVoice() {
+        if (recording || !hasPermissions() || isFinishing) {
+            stopVoice()
+            return
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) return
+        hushBeep()
+        if (voiceWanted) return
+        voiceWanted = true
+        if (speech == null) {
+            try {
+                speech = SpeechRecognizer.createSpeechRecognizer(this).also {
+                    it.setRecognitionListener(voiceListener)
+                }
+            } catch (_: Exception) {
+                voiceWanted = false
+                return
+            }
+        }
+        listen()
+    }
+
+    private fun listen() {
+        if (!voiceWanted || recording) return
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 400L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 700L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 700L)
+            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+        }
+        try {
+            speech?.startListening(intent)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun stopVoice() {
+        voiceWanted = false
+        voiceHandler.removeCallbacks(restartVoice)
+        try {
+            speech?.cancel()
+        } catch (_: Exception) {
+        }
+        restoreSound()
+    }
+
+    private fun onHeard(text: String) {
+        if (voiceHeard || recording) return
+        val said = text.lowercase()
+        val start = said.contains("start recording") || said.contains("start record")
+        val save = Regex("\\bsave\\b").containsMatchIn(said)
+        val delete = Regex("\\bdelete\\b").containsMatchIn(said)
+        when {
+            screen == Screen.REVIEW && delete -> {
+                voiceHeard = true
+                deleteClip()
+            }
+            screen == Screen.REVIEW && save -> {
+                voiceHeard = true
+                saveClip()
+            }
+            screen != Screen.REVIEW && start -> {
+                voiceHeard = true
+                startRecording()
+            }
+        }
+    }
+
+    private fun hushBeep() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+        audio.adjustStreamVolume(AudioManager.STREAM_SYSTEM, AudioManager.ADJUST_MUTE, 0)
+        audio.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_MUTE, 0)
+        audio.adjustStreamVolume(AudioManager.STREAM_RING, AudioManager.ADJUST_MUTE, 0)
+        val music = if (screen == Screen.REVIEW) AudioManager.ADJUST_UNMUTE else AudioManager.ADJUST_MUTE
+        audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, music, 0)
+    }
+
+    private fun restoreSound() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+        audio.adjustStreamVolume(AudioManager.STREAM_SYSTEM, AudioManager.ADJUST_UNMUTE, 0)
+        audio.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_UNMUTE, 0)
+        audio.adjustStreamVolume(AudioManager.STREAM_RING, AudioManager.ADJUST_UNMUTE, 0)
+        audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
     }
 
     private fun clock(ms: Long): String {
