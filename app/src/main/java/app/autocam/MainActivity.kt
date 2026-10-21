@@ -44,6 +44,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 
 class MainActivity : AppCompatActivity() {
     private enum class Screen { HOME, LIVE, REVIEW }
@@ -424,11 +425,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun uprightRatio(): Float {
-        val turn = (sensorOrientation - displayRotationDegrees() + 360) % 360
-        val swap = turn == 90 || turn == 270
-        val width = if (swap) videoSize.height else videoSize.width
-        val height = if (swap) videoSize.width else videoSize.height
-        return width.toFloat() / height.toFloat()
+        val wide = max(videoSize.width, videoSize.height).toFloat()
+        val tall = min(videoSize.width, videoSize.height).toFloat()
+        val portrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+        return if (portrait) tall / wide else wide / tall
     }
 
     private fun startPreview() {
@@ -471,7 +471,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Fits the whole front-camera picture in the window. No stretch, no digital zoom. */
+    /** Turns the camera picture with the phone, instead of leaving it a quarter-turn out. */
     private fun configureTransform() {
         val viewW = preview.width
         val viewH = preview.height
@@ -481,15 +481,16 @@ class MainActivity : AppCompatActivity() {
         val bufferRect = RectF(0f, 0f, videoSize.height.toFloat(), videoSize.width.toFloat())
         val cx = viewRect.centerX()
         val cy = viewRect.centerY()
-        bufferRect.offset(cx - bufferRect.centerX(), cy - bufferRect.centerY())
-        matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.CENTER)
         val rotation = surfaceRotation()
         if (rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270) {
+            bufferRect.offset(cx - bufferRect.centerX(), cy - bufferRect.centerY())
+            matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.CENTER)
             matrix.postRotate(90f * (rotation - 2), cx, cy)
         } else if (rotation == Surface.ROTATION_180) {
             matrix.postRotate(180f, cx, cy)
         } else {
-            matrix.postRotate(sensorOrientation.toFloat(), cx, cy)
+            bufferRect.offset(cx - bufferRect.centerX(), cy - bufferRect.centerY())
+            matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.CENTER)
         }
         if (front) matrix.postScale(-1f, 1f, cx, cy)
         preview.setTransform(matrix)
