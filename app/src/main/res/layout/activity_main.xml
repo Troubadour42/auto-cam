@@ -592,6 +592,13 @@
                         android:layout_width="match_parent"
                         android:layout_height="match_parent" />
 
+                    <View
+                        android:id="@+id/playbackTouch"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:clickable="true"
+                        android:focusable="true" />
+
                     <ImageButton
                         android:id="@+id/pause"
                         android:layout_width="72dp"
@@ -601,7 +608,8 @@
                         android:contentDescription="Pause"
                         android:padding="18dp"
                         android:scaleType="centerInside"
-                        android:src="@drawable/ic_pause" />
+                        android:src="@drawable/ic_pause"
+                        android:visibility="gone" />
                 </app.autocam.AspectFrameLayout>
 
                 <Space

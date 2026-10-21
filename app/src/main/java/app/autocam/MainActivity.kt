@@ -157,6 +157,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.delete).setOnClickListener { deleteClip() }
         findViewById<View>(R.id.sideDelete).setOnClickListener { deleteClip() }
         pauseButton.setOnClickListener { togglePause() }
+        findViewById<View>(R.id.playbackTouch).setOnClickListener { revealPause() }
         showHome()
     }
 
@@ -256,6 +257,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun showHome() {
         screen = Screen.HOME
+        pauseButton.removeCallbacks(hidePause)
+        pauseButton.visibility = View.GONE
         mountPreview(previewCard)
         home.visibility = View.VISIBLE
         live.visibility = View.GONE
@@ -286,7 +289,8 @@ class MainActivity : AppCompatActivity() {
             playback.start()
         }
         playback.start()
-        showPauseIcon(playing = true)
+        pauseButton.removeCallbacks(hidePause)
+        pauseButton.visibility = View.GONE
         applyChrome()
         syncVoice()
     }
@@ -520,15 +524,36 @@ class MainActivity : AppCompatActivity() {
         cameraReady = false
     }
 
+    private val hidePause = Runnable {
+        if (playback.isPlaying) pauseButton.visibility = View.GONE
+    }
+
+    private fun revealPause() {
+        if (screen != Screen.REVIEW || !playback.isPlaying) return
+        showPauseIcon(playing = true)
+        pauseButton.visibility = View.VISIBLE
+        pauseButton.removeCallbacks(hidePause)
+        pauseButton.postDelayed(hidePause, 3000)
+    }
+
+    private fun pausePlayback() {
+        if (screen != Screen.REVIEW || !playback.isPlaying) return
+        playback.pause()
+        showPauseIcon(playing = false)
+        pauseButton.visibility = View.VISIBLE
+        pauseButton.removeCallbacks(hidePause)
+    }
+
+    private fun playPlayback() {
+        if (screen != Screen.REVIEW || playback.isPlaying) return
+        playback.start()
+        pauseButton.removeCallbacks(hidePause)
+        pauseButton.visibility = View.GONE
+    }
+
     private fun togglePause() {
         if (screen != Screen.REVIEW) return
-        if (playback.isPlaying) {
-            playback.pause()
-            showPauseIcon(playing = false)
-        } else {
-            playback.start()
-            showPauseIcon(playing = true)
-        }
+        if (playback.isPlaying) pausePlayback() else playPlayback()
     }
 
     private fun showPauseIcon(playing: Boolean) {
@@ -615,6 +640,8 @@ class MainActivity : AppCompatActivity() {
         val start = said.contains("start recording") || said.contains("start record")
         val save = Regex("\\bsave\\b").containsMatchIn(said)
         val delete = Regex("\\bdelete\\b").containsMatchIn(said)
+        val pause = Regex("\\bpause\\b").containsMatchIn(said)
+        val play = Regex("\\bplay\\b").containsMatchIn(said)
         when {
             screen == Screen.REVIEW && delete -> {
                 voiceHeard = true
@@ -623,6 +650,14 @@ class MainActivity : AppCompatActivity() {
             screen == Screen.REVIEW && save -> {
                 voiceHeard = true
                 saveClip()
+            }
+            screen == Screen.REVIEW && pause -> {
+                voiceHeard = true
+                pausePlayback()
+            }
+            screen == Screen.REVIEW && play -> {
+                voiceHeard = true
+                playPlayback()
             }
             screen != Screen.REVIEW && start -> {
                 voiceHeard = true
