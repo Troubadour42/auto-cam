@@ -6,45 +6,38 @@ import android.animation.ValueAnimator
 import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.graphics.Matrix
-import android.graphics.Rect
-import android.graphics.RectF
-import android.hardware.camera2.CameraCaptureSession
-import android.hardware.camera2.CameraCharacteristics
-import android.hardware.camera2.CameraDevice
-import android.hardware.camera2.CameraManager
-import android.hardware.camera2.CaptureRequest
-import android.media.MediaRecorder
-import android.os.Build
 import android.os.Bundle
 import android.os.Environment
-import android.os.Handler
-import android.os.HandlerThread
 import android.os.SystemClock
 import android.provider.MediaStore
-import android.util.Size
-import android.view.Surface
-import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
-import android.widget.ImageButton
 import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.Space
 import android.widget.TextView
 import android.widget.VideoView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.FallbackStrategy
+import androidx.camera.video.FileOutputOptions
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
+import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
-import kotlin.math.abs
-import kotlin.math.max
-import kotlin.math.min
 
 class MainActivity : AppCompatActivity() {
     private enum class Screen { HOME, LIVE, REVIEW }
@@ -53,7 +46,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var live: FrameLayout
     private lateinit var liveStage: FrameLayout
     private lateinit var review: View
-    private lateinit var preview: TextureView
+    private lateinit var preview: PreviewView
     private lateinit var previewCard: AspectFrameLayout
     private lateinit var previewLockup: ImageView
     private lateinit var recBadge: View
@@ -84,15 +77,12 @@ class MainActivity : AppCompatActivity() {
 
     private var screen = Screen.HOME
     private var front = true
-    private var camera: CameraDevice? = null
-    private var session: CameraCaptureSession? = null
-    private var recorder: MediaRecorder? = null
     private var recording = false
+    private var cameraReady = false
     private var clip: File? = null
-    private var videoSize = Size(1440, 1080)
-    private var activeArray: Rect? = null
-    private var sensorOrientation = 270
-    private var minZoom = 1f
+    private var provider: ProcessCameraProvider? = null
+    private var videoCapture: VideoCapture<Recorder>? = null
+    private var activeRecording: Recording? = null
     private var startedAt = 0L
     private var pulseHome: ObjectAnimator? = null
     private var pulseLive: ObjectAnimator? = null
@@ -105,8 +95,6 @@ class MainActivity : AppCompatActivity() {
             timer.postDelayed(this, 200)
         }
     }
-    private var thread: HandlerThread? = null
-    private var handler: Handler? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -117,21 +105,12 @@ class MainActivity : AppCompatActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
         bindViews()
+        preview.scaleType = PreviewView.ScaleType.FIT_CENTER
+        preview.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
         previewCard.clipToOutline = true
         previewCard.outlineProvider = ViewOutlineProvider.BACKGROUND
         reviewCard.clipToOutline = true
         reviewCard.outlineProvider = ViewOutlineProvider.BACKGROUND
-        preview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-            override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
-                if (screen == Screen.REVIEW) return
-                if (camera != null) startPreview() else openCamera()
-            }
-            override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
-                configureTransform()
-            }
-            override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture) = true
-            override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) {}
-        }
         findViewById<View>(R.id.lockup).setOnClickListener { finish() }
         previewLockup.setOnClickListener { finish() }
         reviewLockup.setOnClickListener { finish() }
@@ -192,24 +171,17 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        startThread()
         if (!hasPermissions()) requestPermissions()
-        else if (screen != Screen.REVIEW && preview.isAvailable) openCamera()
+        else if (screen != Screen.REVIEW) openCamera()
     }
 
     override fun onPause() {
-        if (recording) stopRecording()
-        closeCamera()
-        stopThread()
+        if (recording) stopRecording() else closeCamera()
         super.onPause()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        val ratio = uprightRatio()
-        previewCard.ratio = ratio
-        reviewCard.ratio = ratio
-        preview.post { configureTransform() }
         applyChrome()
     }
 
@@ -232,7 +204,7 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (hasPermissions()) {
             message.visibility = View.GONE
-            if (preview.isAvailable && screen != Screen.REVIEW) openCamera()
+            if (screen != Screen.REVIEW) openCamera()
         } else {
             say("Allow the camera and microphone, then open Auto Cam again.")
         }
@@ -245,19 +217,18 @@ class MainActivity : AppCompatActivity() {
         live.visibility = View.GONE
         review.visibility = View.GONE
         applyChrome()
-        if (hasPermissions() && preview.isAvailable) openCamera()
+        if (hasPermissions()) openCamera()
     }
 
     private fun showLive() {
-        if (screen == Screen.REVIEW) return
+        if (screen == Screen.REVIEW || recording) return
         screen = Screen.LIVE
         mountPreview(liveStage)
         home.visibility = View.GONE
         live.visibility = View.VISIBLE
         review.visibility = View.GONE
         applyChrome()
-        if (camera != null && preview.isAvailable) startPreview()
-        else if (preview.isAvailable) openCamera()
+        if (hasPermissions()) openCamera()
     }
 
     private fun showReview() {
@@ -295,7 +266,7 @@ class MainActivity : AppCompatActivity() {
         sideSpacer.visibility = if (land && onHome) View.VISIBLE else View.GONE
         rowRecord.visibility = if (land) View.GONE else View.VISIBLE
         rowEnd.visibility = if (land) View.GONE else View.VISIBLE
-        previewLockup.visibility = if (camera == null && !recording) View.VISIBLE else View.GONE
+        previewLockup.visibility = if (!cameraReady && !recording) View.VISIBLE else View.GONE
         previewCard.setBackgroundResource(if (recording && onHome) R.drawable.card_rec else R.drawable.card_round)
         recBadge.visibility = if (recording && onHome) View.VISIBLE else View.GONE
         statusText.text = if (recording) "RECORDING" else "READY"
@@ -339,197 +310,69 @@ class MainActivity : AppCompatActivity() {
         message.visibility = View.VISIBLE
     }
 
-    private fun startThread() {
-        if (thread != null) return
-        thread = HandlerThread("cam").also { it.start() }
-        handler = Handler(thread!!.looper)
-    }
-
-    private fun stopThread() {
-        thread?.quitSafely()
-        thread = null
-        handler = null
-    }
-
     private fun openCamera() {
-        if (!hasPermissions() || screen == Screen.REVIEW || camera != null) return
-        val manager = getSystemService(CAMERA_SERVICE) as CameraManager
-        val id = cameraId(manager) ?: run {
-            say("No camera on this phone.")
-            return
-        }
-        val chars = manager.getCameraCharacteristics(id)
-        sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 270
-        activeArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
-        minZoom = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            chars.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.lower ?: 1f
-        } else 1f
-        videoSize = chooseSize(chars)
-        runOnUiThread {
-            val ratio = uprightRatio()
-            previewCard.ratio = ratio
-            reviewCard.ratio = ratio
-            preview.post { configureTransform() }
-        }
-        message.visibility = View.GONE
+        if (!hasPermissions() || screen == Screen.REVIEW || recording) return
+        val future = ProcessCameraProvider.getInstance(this)
+        future.addListener({
+            provider = future.get()
+            bindCamera()
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun bindCamera() {
+        val cameraProvider = provider ?: return
+        if (screen == Screen.REVIEW || recording) return
+        val previewUseCase = Preview.Builder()
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                    .build(),
+            )
+            .build()
+        previewUseCase.surfaceProvider = preview.surfaceProvider
+        val recorder = Recorder.Builder()
+            .setAspectRatio(androidx.camera.core.AspectRatio.RATIO_16_9)
+            .setQualitySelector(
+                QualitySelector.fromOrderedList(
+                    listOf(Quality.FHD, Quality.HD, Quality.SD),
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD),
+                ),
+            )
+            .build()
+        val video = VideoCapture.withOutput(recorder)
+        videoCapture = video
+        val selector = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
         try {
-            manager.openCamera(id, object : CameraDevice.StateCallback() {
-                override fun onOpened(device: CameraDevice) {
-                    camera = device
-                    runOnUiThread {
-                        previewLockup.visibility = View.GONE
-                        applyChrome()
-                    }
-                    startPreview()
-                }
-                override fun onDisconnected(device: CameraDevice) {
-                    device.close()
-                    if (camera == device) camera = null
-                }
-                override fun onError(device: CameraDevice, error: Int) {
-                    device.close()
-                    if (camera == device) camera = null
-                    runOnUiThread { say("The camera didn’t open. Close Samsung Camera and try again.") }
-                }
-            }, handler)
-        } catch (_: SecurityException) {
-            say("Allow the camera and microphone, then open Auto Cam again.")
-        }
-    }
-
-    private fun cameraId(manager: CameraManager): String? {
-        val want = if (front) CameraCharacteristics.LENS_FACING_FRONT else CameraCharacteristics.LENS_FACING_BACK
-        val ids = manager.cameraIdList
-        return ids.firstOrNull {
-            manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == want
-        } ?: ids.firstOrNull()
-    }
-
-    private fun chooseSize(chars: CameraCharacteristics): Size {
-        val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-        val recorder = map?.getOutputSizes(MediaRecorder::class.java)?.toSet().orEmpty()
-        val previewSizes = map?.getOutputSizes(android.graphics.SurfaceTexture::class.java)?.toList().orEmpty()
-        val sizes = previewSizes.filter { recorder.isEmpty() || it in recorder }.ifEmpty { recorder.toList() }
-        if (sizes.isEmpty()) return Size(1440, 1080)
-        val active = activeArray
-        val target = if (active != null && active.height() > 0) {
-            active.width().toFloat() / active.height()
-        } else {
-            4f / 3f
-        }
-        val capped = sizes.filter { max(it.width, it.height) <= 1920 }.ifEmpty { sizes }
-        return capped.minBy {
-            val aspect = it.width.toFloat() / it.height
-            abs(aspect - target) * 100f - (it.width * it.height) / 1_000_000f
-        }
-    }
-
-    private fun uprightRatio(): Float {
-        val wide = max(videoSize.width, videoSize.height).toFloat()
-        val tall = min(videoSize.width, videoSize.height).toFloat()
-        val portrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
-        return if (portrait) tall / wide else wide / tall
-    }
-
-    private fun startPreview() {
-        val device = camera ?: return
-        if (recording) return
-        val texture = preview.surfaceTexture ?: return
-        texture.setDefaultBufferSize(videoSize.width, videoSize.height)
-        runOnUiThread { configureTransform() }
-        val surface = Surface(texture)
-        closeSession()
-        try {
-            device.createCaptureSession(listOf(surface), object : CameraCaptureSession.StateCallback() {
-                override fun onConfigured(capture: CameraCaptureSession) {
-                    if (camera == null) return
-                    session = capture
-                    val request = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                        addTarget(surface)
-                        applyWideView()
-                    }
-                    try {
-                        capture.setRepeatingRequest(request.build(), null, handler)
-                    } catch (_: Exception) {
-                    }
-                }
-                override fun onConfigureFailed(capture: CameraCaptureSession) {
-                    runOnUiThread { say("The preview didn’t start.") }
-                }
-            }, handler)
+            cameraProvider.unbindAll()
+            val camera = cameraProvider.bindToLifecycle(this, selector, previewUseCase, video)
+            val widest = camera.cameraInfo.zoomState.value?.minZoomRatio ?: 1f
+            camera.cameraControl.setZoomRatio(widest)
+            cameraReady = true
+            message.visibility = View.GONE
+            applyChrome()
         } catch (_: Exception) {
-            runOnUiThread { say("The preview didn’t start.") }
+            cameraReady = false
+            say("The camera didn’t open. Close Samsung Camera and try again.")
         }
-    }
-
-    private fun CaptureRequest.Builder.applyWideView() {
-        set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-        set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
-        activeArray?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            set(CaptureRequest.CONTROL_ZOOM_RATIO, minZoom)
-        }
-    }
-
-    /** Turns the camera picture with the phone, instead of leaving it a quarter-turn out. */
-    private fun configureTransform() {
-        val viewW = preview.width
-        val viewH = preview.height
-        if (viewW == 0 || viewH == 0) return
-        val matrix = Matrix()
-        val viewRect = RectF(0f, 0f, viewW.toFloat(), viewH.toFloat())
-        val bufferRect = RectF(0f, 0f, videoSize.height.toFloat(), videoSize.width.toFloat())
-        val cx = viewRect.centerX()
-        val cy = viewRect.centerY()
-        val rotation = surfaceRotation()
-        if (rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270) {
-            bufferRect.offset(cx - bufferRect.centerX(), cy - bufferRect.centerY())
-            matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.CENTER)
-            matrix.postRotate(90f * (rotation - 2), cx, cy)
-        } else if (rotation == Surface.ROTATION_180) {
-            matrix.postRotate(180f, cx, cy)
-        } else {
-            bufferRect.offset(cx - bufferRect.centerX(), cy - bufferRect.centerY())
-            matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.CENTER)
-        }
-        if (front) matrix.postScale(-1f, 1f, cx, cy)
-        preview.setTransform(matrix)
     }
 
     private fun flip() {
         if (recording || screen != Screen.LIVE) return
         front = !front
-        closeCamera()
-        openCamera()
+        bindCamera()
     }
 
     private fun startRecording() {
-        val device = camera ?: return
+        val video = videoCapture ?: return
         if (recording || screen == Screen.REVIEW) return
-        closeSession()
         val file = File(cacheDir, "autocam-${System.currentTimeMillis()}.mp4")
-        if (!prepareRecorder(file, true) && !prepareRecorder(file, false)) {
-            say("Couldn’t start the camcorder microphone.")
-            startPreview()
-            return
-        }
-        val rec = recorder ?: return
-        val texture = preview.surfaceTexture ?: return
-        texture.setDefaultBufferSize(videoSize.width, videoSize.height)
-        val previewSurface = Surface(texture)
-        val recordSurface = rec.surface
-        try {
-            device.createCaptureSession(listOf(previewSurface, recordSurface), object : CameraCaptureSession.StateCallback() {
-                override fun onConfigured(capture: CameraCaptureSession) {
-                    session = capture
-                    val request = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
-                        addTarget(previewSurface)
-                        addTarget(recordSurface)
-                        applyWideView()
-                    }
-                    capture.setRepeatingRequest(request.build(), null, handler)
-                    rec.start()
-                    runOnUiThread {
+        val options = FileOutputOptions.Builder(file).build()
+        activeRecording = video.output
+            .prepareRecording(this, options)
+            .withAudioEnabled()
+            .start(ContextCompat.getMainExecutor(this)) { event ->
+                when (event) {
+                    is VideoRecordEvent.Start -> {
                         clip = file
                         recording = true
                         startedAt = SystemClock.elapsedRealtime()
@@ -539,93 +382,30 @@ class MainActivity : AppCompatActivity() {
                         timer.post(tick)
                         applyChrome()
                     }
-                }
-                override fun onConfigureFailed(capture: CameraCaptureSession) {
-                    releaseRecorder()
-                    runOnUiThread {
-                        say("Couldn’t start recording.")
-                        startPreview()
+                    is VideoRecordEvent.Finalize -> {
+                        recording = false
+                        timer.removeCallbacks(tick)
+                        pulseHome?.cancel()
+                        pulseLive?.cancel()
+                        activeRecording = null
+                        if (!event.hasError() && file.length() > 0) {
+                            clip = file
+                            closeCamera()
+                            showReview()
+                        } else {
+                            file.delete()
+                            if (event.hasError()) say("The recording didn’t finish.")
+                            applyChrome()
+                            openCamera()
+                        }
                     }
+                    else -> Unit
                 }
-            }, handler)
-        } catch (_: Exception) {
-            releaseRecorder()
-            say("Couldn’t start recording.")
-            startPreview()
-        }
-    }
-
-    private fun prepareRecorder(file: File, stereo: Boolean): Boolean {
-        releaseRecorder()
-        val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(this) else MediaRecorder()
-        return try {
-            rec.setAudioSource(MediaRecorder.AudioSource.CAMCORDER)
-            rec.setVideoSource(MediaRecorder.VideoSource.SURFACE)
-            rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            rec.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-            rec.setAudioChannels(if (stereo) 2 else 1)
-            rec.setAudioSamplingRate(48000)
-            rec.setAudioEncodingBitRate(256_000)
-            rec.setVideoEncodingBitRate(8_000_000)
-            rec.setVideoFrameRate(30)
-            rec.setVideoSize(videoSize.width, videoSize.height)
-            rec.setOrientationHint(orientationHint())
-            rec.setOutputFile(file.absolutePath)
-            rec.prepare()
-            recorder = rec
-            true
-        } catch (_: Exception) {
-            rec.release()
-            false
-        }
-    }
-
-    private fun displayRotationDegrees(): Int = when (surfaceRotation()) {
-        Surface.ROTATION_90 -> 90
-        Surface.ROTATION_180 -> 180
-        Surface.ROTATION_270 -> 270
-        else -> 0
-    }
-
-    private fun surfaceRotation(): Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        display?.rotation ?: Surface.ROTATION_0
-    } else {
-        @Suppress("DEPRECATION")
-        windowManager.defaultDisplay.rotation
-    }
-
-    private fun orientationHint(): Int {
-        val degrees = displayRotationDegrees()
-        val hint = if (front) {
-            (sensorOrientation + degrees) % 360
-        } else {
-            (sensorOrientation - degrees + 360) % 360
-        }
-        return if (front) (360 - hint) % 360 else hint
+            }
     }
 
     private fun stopRecording() {
-        if (!recording) return
-        recording = false
-        timer.removeCallbacks(tick)
-        pulseHome?.cancel()
-        pulseLive?.cancel()
-        try {
-            recorder?.stop()
-        } catch (_: Exception) {
-            clip?.delete()
-            clip = null
-        }
-        releaseRecorder()
-        closeSession()
-        if (clip != null && clip!!.length() > 0) {
-            closeCamera()
-            showReview()
-        } else {
-            applyChrome()
-            startPreview()
-        }
+        activeRecording?.stop()
     }
 
     private fun startPulse() {
@@ -672,34 +452,12 @@ class MainActivity : AppCompatActivity() {
         showHome()
     }
 
-    private fun closeSession() {
-        try {
-            session?.close()
-        } catch (_: Exception) {
-        }
-        session = null
-    }
-
-    private fun releaseRecorder() {
-        try {
-            recorder?.reset()
-        } catch (_: Exception) {
-        }
-        try {
-            recorder?.release()
-        } catch (_: Exception) {
-        }
-        recorder = null
-    }
-
     private fun closeCamera() {
-        closeSession()
-        releaseRecorder()
         try {
-            camera?.close()
+            provider?.unbindAll()
         } catch (_: Exception) {
         }
-        camera = null
+        cameraReady = false
     }
 
     private fun clock(ms: Long): String {
