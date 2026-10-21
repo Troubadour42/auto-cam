@@ -1,0 +1,37 @@
+name: Build Auto Cam APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+      - name: Build version 1.0
+        run: gradle assembleDebug --no-daemon
+      - name: Name the APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk AutoCam-1.0.apk
+      - name: Publish Auto Cam 1.0
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: Auto Cam 1.0
+          body: |
+            Install AutoCam-1.0.apk on your Samsung phone.
+            This build records with the camcorder microphone, the same Android mic path as the Samsung Camera app, not the phone-call microphone.
+          files: AutoCam-1.0.apk
+          fail_on_unmatched_files: true

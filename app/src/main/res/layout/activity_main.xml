@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black">
+
+    <TextureView
+        android:id="@+id/preview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="center" />
+
+    <VideoView
+        android:id="@+id/playback"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="center"
+        android:visibility="gone" />
+
+    <View
+        android:id="@+id/frame"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clickable="false" />
+
+    <LinearLayout
+        android:id="@+id/recBadge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_margin="16dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <View
+            android:id="@+id/recDot"
+            android:layout_width="14dp"
+            android:layout_height="14dp"
+            android:background="@drawable/dot_red" />
+
+        <TextView
+            android:id="@+id/timer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="0:00"
+            android:textColor="@android:color/white"
+            android:textSize="16sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/side"
+        android:layout_width="112dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="start|center_vertical"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:paddingStart="8dp"
+        android:visibility="gone">
+
+        <Button
+            android:id="@+id/sidePrimary"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:background="@drawable/btn_round"
+            android:backgroundTint="@null"
+            android:text="●"
+            android:textColor="@color/rec"
+            android:textSize="22sp" />
+
+        <TextView
+            android:id="@+id/sidePrimaryLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:paddingTop="4dp"
+            android:text="Start"
+            android:textColor="@color/cream"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/sideSecondary"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:layout_marginTop="18dp"
+            android:background="@drawable/btn_round"
+            android:backgroundTint="@null"
+            android:text="■"
+            android:textColor="@color/cream"
+            android:textSize="18sp" />
+
+        <TextView
+            android:id="@+id/sideSecondaryLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:paddingTop="4dp"
+            android:text="End"
+            android:textColor="@color/cream"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/bottom"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:padding="24dp">
+
+        <Button
+            android:id="@+id/bottomPrimary"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:background="@drawable/btn_round"
+            android:backgroundTint="@null"
+            android:text="●"
+            android:textColor="@color/rec"
+            android:textSize="28sp" />
+
+        <Button
+            android:id="@+id/bottomSecondary"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:layout_marginStart="24dp"
+            android:background="@drawable/btn_round"
+            android:backgroundTint="@null"
+            android:text="■"
+            android:textColor="@color/cream"
+            android:textSize="20sp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/message"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:padding="24dp"
+        android:textColor="@color/cream"
+        android:textSize="16sp"
+        android:visibility="gone" />
+</FrameLayout>
