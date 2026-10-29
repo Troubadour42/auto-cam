@@ -30,14 +30,14 @@ jobs:
       - name: Build version 1.0
         run: gradle assembleDebug --no-daemon
       - name: Name the APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk AutoCam-1.7.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk AutoCam-1.8.apk
       - name: Publish Auto Cam 1.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.7.0
-          name: Auto Cam 1.7
+          tag_name: v1.8.0
+          name: Auto Cam 1.8
           body: |
-            Install AutoCam-1.7.apk.
-            Recording has a soft red glow on the picture. Playback has a soft green glow that follows the video in portrait and landscape.
-          files: AutoCam-1.7.apk
+            Install AutoCam-1.8.apk.
+            The landscape preview sits beside the side buttons again. In portrait, a Portrait or Landscape button, and the same words by voice, switch the preview shape without turning the phone.
+          files: AutoCam-1.8.apk
           fail_on_unmatched_files: true

@@ -23,7 +23,12 @@ class AspectFrameLayout @JvmOverloads constructor(
         val heightMode = MeasureSpec.getMode(heightMeasureSpec)
         val heightSize = MeasureSpec.getSize(heightMeasureSpec)
         var width = if (widthMode == MeasureSpec.UNSPECIFIED) (heightSize * ratio).toInt() else widthSize
-        var height = (width / ratio).toInt()
+        var height = (width / ratio).toInt().coerceAtLeast(1)
+        val maxHeight = resources.displayMetrics.heightPixels - (40 * resources.displayMetrics.density).toInt()
+        if (maxHeight > 0 && height > maxHeight) {
+            height = maxHeight
+            if (widthMode != MeasureSpec.EXACTLY) width = (height * ratio).toInt()
+        }
         if (heightMode == MeasureSpec.AT_MOST && heightSize > 0 && height > heightSize) {
             height = heightSize
             width = (height * ratio).toInt()

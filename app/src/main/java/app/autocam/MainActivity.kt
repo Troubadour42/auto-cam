@@ -20,6 +20,7 @@ import android.speech.SpeechRecognizer
 import android.os.Environment
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.util.Rational
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -33,6 +34,8 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.UseCaseGroup
+import androidx.camera.core.ViewPort
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.FileOutputOptions
@@ -69,6 +72,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var sideColumn: View
     private lateinit var sideSpacer: View
     private lateinit var rowRecord: View
+    private lateinit var rowFrame: View
+    private lateinit var frameLabel: TextView
+    private lateinit var liveFrameToggle: TextView
     private lateinit var rowEnd: View
     private lateinit var statusText: TextView
     private lateinit var hint: TextView
@@ -99,6 +105,7 @@ class MainActivity : AppCompatActivity() {
     private var front = true
     private var recording = false
     private var cameraReady = false
+    private var widePreview = true
     private var contentWidth = 16
     private var contentHeight = 9
     private var clip: File? = null
@@ -157,6 +164,9 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.sideStart).setOnClickListener { startRecording() }
         findViewById<View>(R.id.liveStart).setOnClickListener { startRecording() }
         findViewById<View>(R.id.btnEnd).setOnClickListener { if (recording) stopRecording() }
+        findViewById<View>(R.id.rowFrame).setOnClickListener { toggleFrame() }
+        findViewById<View>(R.id.btnFrame).setOnClickListener { toggleFrame() }
+        findViewById<View>(R.id.liveFrameToggle).setOnClickListener { toggleFrame() }
         findViewById<View>(R.id.sideEnd).setOnClickListener { if (recording) stopRecording() }
         findViewById<View>(R.id.liveEnd).setOnClickListener { if (recording) stopRecording() }
         findViewById<View>(R.id.shutter).setOnClickListener {
@@ -191,6 +201,9 @@ class MainActivity : AppCompatActivity() {
         sideColumn = findViewById(R.id.sideColumn)
         sideSpacer = findViewById(R.id.sideSpacer)
         rowRecord = findViewById(R.id.rowRecord)
+        rowFrame = findViewById(R.id.rowFrame)
+        frameLabel = findViewById(R.id.frameLabel)
+        liveFrameToggle = findViewById(R.id.liveFrameToggle)
         rowEnd = findViewById(R.id.rowEnd)
         statusText = findViewById(R.id.statusText)
         hint = findViewById(R.id.hint)
@@ -335,6 +348,10 @@ class MainActivity : AppCompatActivity() {
         sideSpacer.visibility = if (land && onHome) View.VISIBLE else View.GONE
         rowRecord.visibility = if (land) View.GONE else View.VISIBLE
         rowEnd.visibility = if (land) View.GONE else View.VISIBLE
+        rowFrame.visibility = if (land || !onHome) View.GONE else View.VISIBLE
+        frameLabel.text = frameWord()
+        findViewById<View>(R.id.btnFrame).contentDescription = frameWord()
+        previewCard.ratio = frameRatio()
         previewLockup.visibility = if (!cameraReady && !recording) View.VISIBLE else View.GONE
         previewCard.setBackgroundResource(R.drawable.card_round)
         previewGlow.visibility = if (recording && onHome) View.VISIBLE else View.GONE
@@ -358,6 +375,9 @@ class MainActivity : AppCompatActivity() {
         liveSide.visibility = if (land && onLive) View.VISIBLE else View.GONE
         liveClock.visibility = if (recording && land && onLive) View.VISIBLE else View.GONE
         livePortraitClock.visibility = if (recording && !land && onLive) View.VISIBLE else View.GONE
+        liveFrameToggle.visibility = if (!land && onLive) View.VISIBLE else View.GONE
+        liveFrameToggle.text = frameWord()
+        liveFrameToggle.contentDescription = frameWord()
         placeLiveGlow()
         liveStatus.text = if (recording) "Recording" else "Ready"
         findViewById<View>(R.id.liveStart).isEnabled = !recording
@@ -397,16 +417,23 @@ class MainActivity : AppCompatActivity() {
     private fun bindCamera() {
         val cameraProvider = provider ?: return
         if (screen == Screen.REVIEW || recording) return
+        val wide = landscape() || widePreview
         val previewUseCase = Preview.Builder()
             .setResolutionSelector(
                 ResolutionSelector.Builder()
-                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                    .setAspectRatioStrategy(
+                        if (wide) AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
+                        else AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY,
+                    )
                     .build(),
             )
             .build()
         previewUseCase.surfaceProvider = preview.surfaceProvider
         val recorder = Recorder.Builder()
-            .setAspectRatio(androidx.camera.core.AspectRatio.RATIO_16_9)
+            .setAspectRatio(
+                if (wide) androidx.camera.core.AspectRatio.RATIO_16_9
+                else androidx.camera.core.AspectRatio.RATIO_4_3,
+            )
             .setQualitySelector(
                 QualitySelector.fromOrderedList(
                     listOf(Quality.FHD, Quality.HD, Quality.SD),
@@ -417,9 +444,12 @@ class MainActivity : AppCompatActivity() {
         val video = VideoCapture.withOutput(recorder)
         videoCapture = video
         val selector = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+        val rotation = preview.display?.rotation ?: android.view.Surface.ROTATION_0
+        val viewport = ViewPort.Builder(if (wide) Rational(16, 9) else Rational(9, 16), rotation).build()
+        val group = UseCaseGroup.Builder().addUseCase(previewUseCase).addUseCase(video).setViewPort(viewport).build()
         try {
             cameraProvider.unbindAll()
-            val camera = cameraProvider.bindToLifecycle(this, selector, previewUseCase, video)
+            val camera = cameraProvider.bindToLifecycle(this, selector, group)
             val widest = camera.cameraInfo.zoomState.value?.minZoomRatio ?: 1f
             camera.cameraControl.setZoomRatio(widest)
             rememberPreviewSize(previewUseCase)
@@ -439,9 +469,6 @@ class MainActivity : AppCompatActivity() {
             val swap = info.rotationDegrees % 180 != 0
             contentWidth = if (swap) size.height else size.width
             contentHeight = if (swap) size.width else size.height
-            if (contentWidth > 0 && contentHeight > 0) {
-                previewCard.ratio = contentWidth.toFloat() / contentHeight
-            }
             placeLiveGlow()
         }
     }
@@ -743,6 +770,8 @@ class MainActivity : AppCompatActivity() {
         val delete = Regex("\\bdelete\\b").containsMatchIn(said)
         val pause = Regex("\\bpause\\b").containsMatchIn(said)
         val play = Regex("\\bplay\\b").containsMatchIn(said)
+        val sayLandscape = Regex("\\blandscape\\b").containsMatchIn(said)
+        val sayPortrait = Regex("\\bportrait\\b").containsMatchIn(said)
         when {
             screen == Screen.REVIEW && delete -> {
                 voiceHeard = true
@@ -759,6 +788,14 @@ class MainActivity : AppCompatActivity() {
             screen == Screen.REVIEW && play -> {
                 voiceHeard = true
                 playPlayback()
+            }
+            screen != Screen.REVIEW && !landscape() && sayLandscape -> {
+                voiceHeard = true
+                setWidePreview(true)
+            }
+            screen != Screen.REVIEW && !landscape() && sayPortrait -> {
+                voiceHeard = true
+                setWidePreview(false)
             }
             screen != Screen.REVIEW && start -> {
                 voiceHeard = true
@@ -784,6 +821,23 @@ class MainActivity : AppCompatActivity() {
         audio.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_UNMUTE, 0)
         audio.adjustStreamVolume(AudioManager.STREAM_RING, AudioManager.ADJUST_UNMUTE, 0)
         audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
+    }
+
+    private fun frameRatio(): Float = if (landscape() || widePreview) 16f / 9f else 9f / 16f
+
+    private fun frameWord(): String = if (widePreview) "Portrait" else "Landscape"
+
+    private fun toggleFrame() {
+        if (recording || landscape()) return
+        setWidePreview(!widePreview)
+    }
+
+    private fun setWidePreview(wide: Boolean) {
+        if (widePreview == wide) return
+        widePreview = wide
+        previewCard.ratio = frameRatio()
+        applyChrome()
+        if (!recording && screen != Screen.REVIEW && hasPermissions()) bindCamera()
     }
 
     private fun clock(ms: Long): String {
