@@ -124,6 +124,12 @@
                         android:contentDescription="Close Auto Cam"
                         android:padding="8dp"
                         android:src="@drawable/auto_cam_lockup" />
+
+                    <app.autocam.GlowBorderView
+                        android:id="@+id/previewGlow"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:visibility="gone" />
                 </app.autocam.AspectFrameLayout>
 
                 <Space
@@ -326,10 +332,11 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
 
-        <View
+        <app.autocam.GlowBorderView
             android:id="@+id/liveFrame"
             android:layout_width="match_parent"
-            android:layout_height="match_parent" />
+            android:layout_height="match_parent"
+            android:visibility="gone" />
 
         <LinearLayout
             android:id="@+id/liveSide"
@@ -585,12 +592,13 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:background="@drawable/card_play">
+                    android:background="@drawable/card_round">
 
-                    <VideoView
+                    <app.autocam.FillVideoView
                         android:id="@+id/playback"
                         android:layout_width="match_parent"
-                        android:layout_height="match_parent" />
+                        android:layout_height="match_parent"
+                        android:layout_gravity="center" />
 
                     <View
                         android:id="@+id/playbackTouch"
@@ -598,6 +606,11 @@
                         android:layout_height="match_parent"
                         android:clickable="true"
                         android:focusable="true" />
+
+                    <app.autocam.GlowBorderView
+                        android:id="@+id/reviewGlow"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent" />
 
                     <ImageButton
                         android:id="@+id/pause"

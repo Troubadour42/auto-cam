@@ -8,6 +8,8 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.content.Intent
 import android.media.AudioManager
+import android.graphics.Rect
+import android.media.MediaMetadataRetriever
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -18,9 +20,9 @@ import android.speech.SpeechRecognizer
 import android.os.Environment
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -71,7 +73,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var hint: TextView
     private lateinit var openCameraButton: TextView
-    private lateinit var liveFrame: View
+    private lateinit var previewGlow: GlowBorderView
+    private lateinit var liveFrame: GlowBorderView
+    private lateinit var reviewGlow: GlowBorderView
     private lateinit var liveClock: View
     private lateinit var liveDot: View
     private lateinit var liveTimer: TextView
@@ -95,6 +99,8 @@ class MainActivity : AppCompatActivity() {
     private var front = true
     private var recording = false
     private var cameraReady = false
+    private var contentWidth = 16
+    private var contentHeight = 9
     private var clip: File? = null
     private var provider: ProcessCameraProvider? = null
     private var videoCapture: VideoCapture<Recorder>? = null
@@ -132,10 +138,16 @@ class MainActivity : AppCompatActivity() {
         bindViews()
         preview.scaleType = PreviewView.ScaleType.FIT_CENTER
         preview.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-        previewCard.clipToOutline = true
-        previewCard.outlineProvider = ViewOutlineProvider.BACKGROUND
-        reviewCard.clipToOutline = true
-        reviewCard.outlineProvider = ViewOutlineProvider.BACKGROUND
+        previewCard.clipToOutline = false
+        reviewCard.clipToOutline = false
+        previewCard.clipChildren = false
+        reviewCard.clipChildren = false
+        previewGlow.glowColor = ContextCompat.getColor(this, R.color.rec)
+        liveFrame.glowColor = ContextCompat.getColor(this, R.color.rec)
+        reviewGlow.glowColor = ContextCompat.getColor(this, R.color.play)
+        live.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            if (recording && screen == Screen.LIVE) placeLiveGlow()
+        }
         findViewById<View>(R.id.lockup).setOnClickListener { finish() }
         previewLockup.setOnClickListener { finish() }
         reviewLockup.setOnClickListener { finish() }
@@ -168,6 +180,7 @@ class MainActivity : AppCompatActivity() {
         review = findViewById(R.id.review)
         preview = findViewById(R.id.preview)
         previewCard = findViewById(R.id.previewCard)
+        previewGlow = findViewById(R.id.previewGlow)
         previewLockup = findViewById(R.id.previewLockup)
         recDot = findViewById(R.id.recDot)
         timer = findViewById(R.id.timer)
@@ -198,6 +211,7 @@ class MainActivity : AppCompatActivity() {
         reviewSpacer = findViewById(R.id.reviewSpacer)
         reviewButtons = findViewById(R.id.reviewButtons)
         reviewCard = findViewById(R.id.reviewCard)
+        reviewGlow = findViewById(R.id.reviewGlow)
         playback = findViewById(R.id.playback)
         pauseButton = findViewById(R.id.pause)
         message = findViewById(R.id.message)
@@ -284,10 +298,15 @@ class MainActivity : AppCompatActivity() {
         live.visibility = View.GONE
         review.visibility = View.VISIBLE
         playback.setVideoPath(clip!!.absolutePath)
-        playback.setOnPreparedListener {
-            it.isLooping = true
+        playback.setOnPreparedListener { player ->
+            val (width, height) = displayedVideoSize(clip!!)
+            val videoWidth = if (width > 0) width else player.videoWidth
+            val videoHeight = if (height > 0) height else player.videoHeight
+            if (videoWidth > 0 && videoHeight > 0) reviewCard.ratio = videoWidth.toFloat() / videoHeight
+            player.isLooping = true
             playback.start()
         }
+        playback.start()
         playback.start()
         pauseButton.removeCallbacks(hidePause)
         pauseButton.visibility = View.GONE
@@ -317,7 +336,8 @@ class MainActivity : AppCompatActivity() {
         rowRecord.visibility = if (land) View.GONE else View.VISIBLE
         rowEnd.visibility = if (land) View.GONE else View.VISIBLE
         previewLockup.visibility = if (!cameraReady && !recording) View.VISIBLE else View.GONE
-        previewCard.setBackgroundResource(if (recording && onHome) R.drawable.card_rec else R.drawable.card_round)
+        previewCard.setBackgroundResource(R.drawable.card_round)
+        previewGlow.visibility = if (recording && onHome) View.VISIBLE else View.GONE
         val showSideClock = recording && land && onHome
         val showPortraitClock = recording && !land && onHome
         sideClock.visibility = if (showSideClock) View.VISIBLE else View.GONE
@@ -338,7 +358,7 @@ class MainActivity : AppCompatActivity() {
         liveSide.visibility = if (land && onLive) View.VISIBLE else View.GONE
         liveClock.visibility = if (recording && land && onLive) View.VISIBLE else View.GONE
         livePortraitClock.visibility = if (recording && !land && onLive) View.VISIBLE else View.GONE
-        liveFrame.background = if (recording && onLive) ContextCompat.getDrawable(this, R.drawable.stroke_red) else null
+        placeLiveGlow()
         liveStatus.text = if (recording) "Recording" else "Ready"
         findViewById<View>(R.id.liveStart).isEnabled = !recording
         findViewById<View>(R.id.liveEnd).isEnabled = recording
@@ -402,12 +422,93 @@ class MainActivity : AppCompatActivity() {
             val camera = cameraProvider.bindToLifecycle(this, selector, previewUseCase, video)
             val widest = camera.cameraInfo.zoomState.value?.minZoomRatio ?: 1f
             camera.cameraControl.setZoomRatio(widest)
+            rememberPreviewSize(previewUseCase)
             cameraReady = true
             message.visibility = View.GONE
             applyChrome()
         } catch (_: Exception) {
             cameraReady = false
             say("The camera didn’t open. Close Samsung Camera and try again.")
+        }
+    }
+
+    private fun rememberPreviewSize(previewUseCase: Preview) {
+        preview.post {
+            val info = previewUseCase.resolutionInfo ?: return@post
+            val size = info.resolution
+            val swap = info.rotationDegrees % 180 != 0
+            contentWidth = if (swap) size.height else size.width
+            contentHeight = if (swap) size.width else size.height
+            if (contentWidth > 0 && contentHeight > 0) {
+                previewCard.ratio = contentWidth.toFloat() / contentHeight
+            }
+            placeLiveGlow()
+        }
+    }
+
+    private fun placeLiveGlow() {
+        if (screen != Screen.LIVE || !recording) {
+            liveFrame.visibility = View.GONE
+            return
+        }
+        val width = live.width
+        val height = live.height
+        if (width == 0 || height == 0) {
+            live.post { placeLiveGlow() }
+            return
+        }
+        val rect = fitRect(width, height, contentWidth, contentHeight)
+        val params = liveFrame.layoutParams as FrameLayout.LayoutParams
+        if (
+            params.width == rect.width() &&
+            params.height == rect.height() &&
+            params.leftMargin == rect.left &&
+            params.topMargin == rect.top &&
+            liveFrame.visibility == View.VISIBLE
+        ) {
+            return
+        }
+        params.width = rect.width()
+        params.height = rect.height()
+        params.gravity = Gravity.START or Gravity.TOP
+        params.leftMargin = rect.left
+        params.topMargin = rect.top
+        liveFrame.layoutParams = params
+        liveFrame.visibility = View.VISIBLE
+    }
+
+    private fun fitRect(viewW: Int, viewH: Int, contentW: Int, contentH: Int): Rect {
+        if (viewW == 0 || viewH == 0 || contentW <= 0 || contentH <= 0) return Rect(0, 0, viewW, viewH)
+        val viewAspect = viewW.toFloat() / viewH
+        val contentAspect = contentW.toFloat() / contentH
+        return if (contentAspect > viewAspect) {
+            val fitted = (viewW / contentAspect).toInt().coerceAtLeast(1)
+            val top = (viewH - fitted) / 2
+            Rect(0, top, viewW, top + fitted)
+        } else {
+            val fitted = (viewH * contentAspect).toInt().coerceAtLeast(1)
+            val left = (viewW - fitted) / 2
+            Rect(left, 0, left + fitted, viewH)
+        }
+    }
+
+    private fun displayedVideoSize(file: File): Pair<Int, Int> {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(file.absolutePath)
+            var width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+            var height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+            val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+            if (rotation == 90 || rotation == 270) {
+                val swap = width
+                width = height
+                height = swap
+            }
+            width to height
+        } catch (_: Exception) {
+            0 to 0
+        } finally {
+            retriever.release()
         }
     }
 
