@@ -30,14 +30,14 @@ jobs:
       - name: Build version 1.0
         run: gradle assembleDebug --no-daemon
       - name: Name the APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk AutoCam-1.8.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk AutoCam-1.9.apk
       - name: Publish Auto Cam 1.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.8.0
-          name: Auto Cam 1.8
+          tag_name: v1.9.0
+          name: Auto Cam 1.9
           body: |
-            Install AutoCam-1.8.apk.
-            The landscape preview sits beside the side buttons again. In portrait, a Portrait or Landscape button, and the same words by voice, switch the preview shape without turning the phone.
-          files: AutoCam-1.8.apk
+            Install AutoCam-1.9.apk.
+            A phone held in landscape records landscape, with no portrait option. The picture corners are rounded to match the red and green glow.
+          files: AutoCam-1.9.apk
           fail_on_unmatched_files: true

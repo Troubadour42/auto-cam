@@ -30,7 +30,7 @@ class GlowBorderView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         val density = resources.displayMetrics.density
-        val inset = 3f * density
+        val inset = 1.5f * density
         val rect = RectF(inset, inset, width - inset, height - inset)
         if (rect.width() <= 0f || rect.height() <= 0f) return
         val radius = 18f * density

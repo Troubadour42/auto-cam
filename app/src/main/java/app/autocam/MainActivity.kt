@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.content.Intent
 import android.media.AudioManager
+import android.graphics.Outline
 import android.graphics.Rect
 import android.media.MediaMetadataRetriever
 import android.os.Build
@@ -22,8 +23,10 @@ import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Rational
 import android.view.Gravity
+import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -145,6 +148,16 @@ class MainActivity : AppCompatActivity() {
         bindViews()
         preview.scaleType = PreviewView.ScaleType.FIT_CENTER
         preview.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+        val rounded = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                val radius = 18f * view.resources.displayMetrics.density
+                outline.setRoundRect(0, 0, view.width, view.height, radius)
+            }
+        }
+        preview.outlineProvider = rounded
+        preview.clipToOutline = true
+        playback.outlineProvider = rounded
+        playback.clipToOutline = true
         previewCard.clipToOutline = false
         reviewCard.clipToOutline = false
         previewCard.clipChildren = false
@@ -153,7 +166,8 @@ class MainActivity : AppCompatActivity() {
         liveFrame.glowColor = ContextCompat.getColor(this, R.color.rec)
         reviewGlow.glowColor = ContextCompat.getColor(this, R.color.play)
         live.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            if (recording && screen == Screen.LIVE) placeLiveGlow()
+            layoutPreview()
+            placeLiveGlow()
         }
         findViewById<View>(R.id.lockup).setOnClickListener { finish() }
         previewLockup.setOnClickListener { finish() }
@@ -253,7 +267,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (landscape()) widePreview = true
         applyChrome()
+        layoutPreview()
+        if (!recording && screen != Screen.REVIEW) bindCamera()
     }
 
     private fun landscape() =
@@ -339,6 +356,35 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ),
         )
+        layoutPreview()
+    }
+
+    private fun layoutPreview() {
+        val parent = preview.parent as? FrameLayout ?: return
+        val params = preview.layoutParams as FrameLayout.LayoutParams
+        if (parent !== liveStage) {
+            if (params.width == ViewGroup.LayoutParams.MATCH_PARENT && params.leftMargin == 0 && params.topMargin == 0) return
+            params.width = ViewGroup.LayoutParams.MATCH_PARENT
+            params.height = ViewGroup.LayoutParams.MATCH_PARENT
+            params.leftMargin = 0
+            params.topMargin = 0
+            preview.layoutParams = params
+            return
+        }
+        val width = liveStage.width
+        val height = liveStage.height
+        if (width == 0 || height == 0) {
+            liveStage.post { layoutPreview() }
+            return
+        }
+        val rect = pictureRect(width, height)
+        if (params.width == rect.width() && params.height == rect.height() && params.leftMargin == rect.left && params.topMargin == rect.top) return
+        params.width = rect.width()
+        params.height = rect.height()
+        params.gravity = Gravity.START or Gravity.TOP
+        params.leftMargin = rect.left
+        params.topMargin = rect.top
+        preview.layoutParams = params
     }
 
     private fun applyChrome() {
@@ -397,6 +443,7 @@ class MainActivity : AppCompatActivity() {
         reviewSide.visibility = if (land && onReview) View.VISIBLE else View.GONE
         reviewSpacer.visibility = if (land && onReview) View.VISIBLE else View.GONE
         reviewButtons.visibility = if (land) View.GONE else View.VISIBLE
+        layoutPreview()
         syncVoice()
     }
 
@@ -441,10 +488,12 @@ class MainActivity : AppCompatActivity() {
                 ),
             )
             .build()
+        val rotation = displayRotation()
+        previewUseCase.targetRotation = rotation
         val video = VideoCapture.withOutput(recorder)
+        video.targetRotation = rotation
         videoCapture = video
         val selector = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
-        val rotation = preview.display?.rotation ?: android.view.Surface.ROTATION_0
         val viewport = ViewPort.Builder(if (wide) Rational(16, 9) else Rational(9, 16), rotation).build()
         val group = UseCaseGroup.Builder().addUseCase(previewUseCase).addUseCase(video).setViewPort(viewport).build()
         try {
@@ -484,7 +533,7 @@ class MainActivity : AppCompatActivity() {
             live.post { placeLiveGlow() }
             return
         }
-        val rect = fitRect(width, height, contentWidth, contentHeight)
+        val rect = pictureRect(width, height)
         val params = liveFrame.layoutParams as FrameLayout.LayoutParams
         if (
             params.width == rect.width() &&
@@ -502,6 +551,20 @@ class MainActivity : AppCompatActivity() {
         params.topMargin = rect.top
         liveFrame.layoutParams = params
         liveFrame.visibility = View.VISIBLE
+    }
+
+    private fun pictureRect(viewW: Int, viewH: Int): Rect {
+        val ratio = frameRatio()
+        return fitRect(viewW, viewH, 1000, (1000 / ratio).toInt().coerceAtLeast(1))
+    }
+
+    private fun displayRotation(): Int {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            display?.rotation ?: Surface.ROTATION_0
+        } else {
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.rotation
+        }
     }
 
     private fun fitRect(viewW: Int, viewH: Int, contentW: Int, contentH: Int): Rect {
@@ -548,6 +611,8 @@ class MainActivity : AppCompatActivity() {
     private fun startRecording() {
         val video = videoCapture ?: return
         if (recording || screen == Screen.REVIEW) return
+        if (landscape()) widePreview = true
+        video.targetRotation = displayRotation()
         stopVoice()
         val file = File(cacheDir, "autocam-${System.currentTimeMillis()}.mp4")
         val options = FileOutputOptions.Builder(file).build()
