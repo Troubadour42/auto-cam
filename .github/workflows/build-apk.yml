@@ -30,14 +30,14 @@ jobs:
       - name: Build version 1.0
         run: gradle assembleDebug --no-daemon
       - name: Name the APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk AutoCam-2.0.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk AutoCam-2.1.apk
       - name: Publish Auto Cam 1.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.0.0
-          name: Auto Cam 2.0
+          tag_name: v2.1.0
+          name: Auto Cam 2.1
           body: |
-            Install AutoCam-2.0.apk.
-            In landscape, End recording is split over two lines like Start recording. A landscape preview while the phone is held upright uses the widest camera view instead of cropping in.
-          files: AutoCam-2.0.apk
+            Install AutoCam-2.1.apk.
+            Landscape preview while the phone is upright is a wide 16:9 picture again, cropped from the full camera rather than shown as a tall portrait image.
+          files: AutoCam-2.1.apk
           fail_on_unmatched_files: true

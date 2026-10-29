@@ -479,7 +479,7 @@ class MainActivity : AppCompatActivity() {
         previewUseCase.surfaceProvider = preview.surfaceProvider
         val recorder = Recorder.Builder()
             .setAspectRatio(
-                if (heldLandscape) androidx.camera.core.AspectRatio.RATIO_16_9
+                if (wide) androidx.camera.core.AspectRatio.RATIO_16_9
                 else androidx.camera.core.AspectRatio.RATIO_4_3,
             )
             .setQualitySelector(
@@ -496,8 +496,7 @@ class MainActivity : AppCompatActivity() {
         videoCapture = video
         val selector = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
         val viewportAspect = if (wide) Rational(16, 9) else Rational(9, 16)
-        val scale = if (heldLandscape || !wide) ViewPort.FILL_CENTER else ViewPort.FIT
-        val viewport = ViewPort.Builder(viewportAspect, rotation).setScaleType(scale).build()
+        val viewport = ViewPort.Builder(viewportAspect, rotation).setScaleType(ViewPort.FILL_CENTER).build()
         val group = UseCaseGroup.Builder().addUseCase(previewUseCase).addUseCase(video).setViewPort(viewport).build()
         try {
             cameraProvider.unbindAll()
