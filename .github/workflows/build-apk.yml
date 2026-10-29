@@ -30,14 +30,14 @@ jobs:
       - name: Build version 1.0
         run: gradle assembleDebug --no-daemon
       - name: Name the APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk AutoCam-2.1.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk AutoCam-2.2.apk
       - name: Publish Auto Cam 1.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.1.0
-          name: Auto Cam 2.1
+          tag_name: v2.2.0
+          name: Auto Cam 2.2
           body: |
-            Install AutoCam-2.1.apk.
-            Landscape preview while the phone is upright is a wide 16:9 picture again, cropped from the full camera rather than shown as a tall portrait image.
-          files: AutoCam-2.1.apk
+            Install AutoCam-2.2.apk.
+            The screen stays on while Auto Cam is open, so a recording is not cut off when the display fades.
+          files: AutoCam-2.2.apk
           fail_on_unmatched_files: true

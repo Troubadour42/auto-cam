@@ -24,6 +24,7 @@ import android.provider.MediaStore
 import android.util.Rational
 import android.view.Gravity
 import android.view.Surface
+import android.view.WindowManager
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
@@ -139,6 +140,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         WindowInsetsControllerCompat(window, window.decorView).apply {
