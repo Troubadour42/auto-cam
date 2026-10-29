@@ -52,7 +52,7 @@
                         android:layout_height="wrap_content"
                         android:gravity="center"
                         android:paddingTop="6dp"
-                        android:text="Start recording"
+                        android:text="Start\nrecording"
                         android:textColor="@color/cream"
                         android:textSize="12sp" />
 
@@ -72,7 +72,7 @@
                         android:layout_height="wrap_content"
                         android:gravity="center"
                         android:paddingTop="6dp"
-                        android:text="End recording"
+                        android:text="End\nrecording"
                         android:textColor="@color/cream"
                         android:textSize="12sp" />
 

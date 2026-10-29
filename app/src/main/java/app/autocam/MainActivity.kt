@@ -464,12 +464,13 @@ class MainActivity : AppCompatActivity() {
     private fun bindCamera() {
         val cameraProvider = provider ?: return
         if (screen == Screen.REVIEW || recording) return
-        val wide = landscape() || widePreview
+        val heldLandscape = landscape()
+        val wide = heldLandscape || widePreview
         val previewUseCase = Preview.Builder()
             .setResolutionSelector(
                 ResolutionSelector.Builder()
                     .setAspectRatioStrategy(
-                        if (wide) AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
+                        if (heldLandscape) AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
                         else AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY,
                     )
                     .build(),
@@ -478,7 +479,7 @@ class MainActivity : AppCompatActivity() {
         previewUseCase.surfaceProvider = preview.surfaceProvider
         val recorder = Recorder.Builder()
             .setAspectRatio(
-                if (wide) androidx.camera.core.AspectRatio.RATIO_16_9
+                if (heldLandscape) androidx.camera.core.AspectRatio.RATIO_16_9
                 else androidx.camera.core.AspectRatio.RATIO_4_3,
             )
             .setQualitySelector(
@@ -494,13 +495,18 @@ class MainActivity : AppCompatActivity() {
         video.targetRotation = rotation
         videoCapture = video
         val selector = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
-        val viewport = ViewPort.Builder(if (wide) Rational(16, 9) else Rational(9, 16), rotation).build()
+        val viewportAspect = if (wide) Rational(16, 9) else Rational(9, 16)
+        val scale = if (heldLandscape || !wide) ViewPort.FILL_CENTER else ViewPort.FIT
+        val viewport = ViewPort.Builder(viewportAspect, rotation).setScaleType(scale).build()
         val group = UseCaseGroup.Builder().addUseCase(previewUseCase).addUseCase(video).setViewPort(viewport).build()
         try {
             cameraProvider.unbindAll()
             val camera = cameraProvider.bindToLifecycle(this, selector, group)
-            val widest = camera.cameraInfo.zoomState.value?.minZoomRatio ?: 1f
-            camera.cameraControl.setZoomRatio(widest)
+            camera.cameraInfo.zoomState.observe(this) { state ->
+                if (state.zoomRatio > state.minZoomRatio + 0.01f) {
+                    camera.cameraControl.setZoomRatio(state.minZoomRatio)
+                }
+            }
             rememberPreviewSize(previewUseCase)
             cameraReady = true
             message.visibility = View.GONE
