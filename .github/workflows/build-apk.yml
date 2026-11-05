@@ -30,14 +30,14 @@ jobs:
       - name: Build version 1.0
         run: gradle assembleDebug --no-daemon
       - name: Name the APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk AutoCam-2.2.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk AutoCam-2.3.apk
       - name: Publish Auto Cam 1.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.2.0
-          name: Auto Cam 2.2
+          tag_name: v2.3.0
+          name: Auto Cam 2.3
           body: |
-            Install AutoCam-2.2.apk.
-            The screen stays on while Auto Cam is open, so a recording is not cut off when the display fades.
-          files: AutoCam-2.2.apk
+            Install AutoCam-2.3.apk.
+            When playback reaches the end, it returns to the first frame and pauses until you play, save, or delete.
+          files: AutoCam-2.3.apk
           fail_on_unmatched_files: true

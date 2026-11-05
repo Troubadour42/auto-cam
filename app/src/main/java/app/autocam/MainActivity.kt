@@ -335,11 +335,19 @@ class MainActivity : AppCompatActivity() {
             val videoWidth = if (width > 0) width else player.videoWidth
             val videoHeight = if (height > 0) height else player.videoHeight
             if (videoWidth > 0 && videoHeight > 0) reviewCard.ratio = videoWidth.toFloat() / videoHeight
-            player.isLooping = true
+            player.isLooping = false
             playback.start()
         }
-        playback.start()
-        playback.start()
+        playback.setOnCompletionListener {
+            playback.post {
+                if (screen != Screen.REVIEW) return@post
+                playback.seekTo(0)
+                showPauseIcon(playing = false)
+                pauseButton.visibility = View.VISIBLE
+                pauseButton.removeCallbacks(hidePause)
+            }
+        }
+        playback.setOnErrorListener { _, _, _ -> true }
         pauseButton.removeCallbacks(hidePause)
         pauseButton.visibility = View.GONE
         applyChrome()
