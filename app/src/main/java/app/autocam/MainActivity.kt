@@ -196,7 +196,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.sideDelete).setOnClickListener { deleteClip() }
         pauseButton.setOnClickListener { togglePause() }
         findViewById<View>(R.id.playbackTouch).setOnClickListener { revealPause() }
-        showHome()
+        restorePendingClip(savedInstanceState)
     }
 
     private fun bindViews() {
@@ -244,6 +244,11 @@ class MainActivity : AppCompatActivity() {
         playback = findViewById(R.id.playback)
         pauseButton = findViewById(R.id.pause)
         message = findViewById(R.id.message)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        clip?.absolutePath?.let { outState.putString(PENDING_CLIP, it) }
     }
 
     override fun onResume() {
@@ -326,6 +331,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showReview() {
         screen = Screen.REVIEW
+        clip?.let { rememberClip(it) }
         home.visibility = View.GONE
         live.visibility = View.GONE
         review.visibility = View.VISIBLE
@@ -337,6 +343,7 @@ class MainActivity : AppCompatActivity() {
             if (videoWidth > 0 && videoHeight > 0) reviewCard.ratio = videoWidth.toFloat() / videoHeight
             player.isLooping = false
             playback.start()
+            syncVoice()
         }
         playback.setOnCompletionListener {
             playback.post {
@@ -345,6 +352,7 @@ class MainActivity : AppCompatActivity() {
                 showPauseIcon(playing = false)
                 pauseButton.visibility = View.VISIBLE
                 pauseButton.removeCallbacks(hidePause)
+                syncVoice()
             }
         }
         playback.setOnErrorListener { _, _, _ -> true }
@@ -714,6 +722,7 @@ class MainActivity : AppCompatActivity() {
         playback.stopPlayback()
         file.delete()
         clip = null
+        rememberClip(null)
         showHome()
     }
 
@@ -721,6 +730,7 @@ class MainActivity : AppCompatActivity() {
         playback.stopPlayback()
         clip?.delete()
         clip = null
+        rememberClip(null)
         showHome()
     }
 
@@ -750,6 +760,7 @@ class MainActivity : AppCompatActivity() {
         showPauseIcon(playing = false)
         pauseButton.visibility = View.VISIBLE
         pauseButton.removeCallbacks(hidePause)
+        syncVoice()
     }
 
     private fun playPlayback() {
@@ -757,6 +768,7 @@ class MainActivity : AppCompatActivity() {
         playback.start()
         pauseButton.removeCallbacks(hidePause)
         pauseButton.visibility = View.GONE
+        playback.post { syncVoice() }
     }
 
     private fun togglePause() {
@@ -781,20 +793,25 @@ class MainActivity : AppCompatActivity() {
             voiceHandler.postDelayed(restartVoice, 400)
         }
         override fun onResults(results: Bundle?) {
-            results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.forEach(::onHeard)
+            results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.forEach { onHeard(it, partial = false) }
             if (voiceWanted && !recording) {
                 voiceHandler.removeCallbacks(restartVoice)
                 voiceHandler.postDelayed(restartVoice, 250)
             }
         }
         override fun onPartialResults(partial: Bundle?) {
-            partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.forEach(::onHeard)
+            partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.forEach { onHeard(it, partial = true) }
         }
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 
     private fun syncVoice() {
-        if (recording || !hasPermissions() || isFinishing) {
+        val playingReview = screen == Screen.REVIEW && try {
+            playback.isPlaying
+        } catch (_: Exception) {
+            false
+        }
+        if (recording || playingReview || !hasPermissions() || isFinishing) {
             stopVoice()
             return
         }
@@ -842,12 +859,14 @@ class MainActivity : AppCompatActivity() {
         restoreSound()
     }
 
-    private fun onHeard(text: String) {
+    private fun onHeard(text: String, partial: Boolean = false) {
         if (voiceHeard || recording) return
+        if (screen == Screen.REVIEW && try { playback.isPlaying } catch (_: Exception) { false }) return
         val said = text.lowercase()
         val start = said.contains("start recording") || said.contains("start record")
         val save = Regex("\\bsave\\b").containsMatchIn(said)
         val delete = Regex("\\bdelete\\b").containsMatchIn(said)
+        if (partial && (save || delete)) return
         val pause = Regex("\\bpause\\b").containsMatchIn(said)
         val play = Regex("\\bplay\\b").containsMatchIn(said)
         val sayLandscape = Regex("\\blandscape\\b").containsMatchIn(said)
@@ -903,6 +922,24 @@ class MainActivity : AppCompatActivity() {
         audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
     }
 
+    private fun restorePendingClip(savedInstanceState: Bundle?) {
+        val path = savedInstanceState?.getString(PENDING_CLIP)
+            ?: getPreferences(MODE_PRIVATE).getString(PENDING_CLIP, null)
+        val pending = path?.let { File(it) }?.takeIf { it.isFile && it.length() > 0 }
+        if (pending != null) {
+            clip = pending
+            showReview()
+        } else {
+            showHome()
+        }
+    }
+
+    private fun rememberClip(file: File?) {
+        getPreferences(MODE_PRIVATE).edit().apply {
+            if (file != null && file.exists()) putString(PENDING_CLIP, file.absolutePath) else remove(PENDING_CLIP)
+        }.apply()
+    }
+
     private fun frameRatio(): Float = if (landscape() || widePreview) 16f / 9f else 9f / 16f
 
     private fun frameWord(): String = if (widePreview) "Portrait" else "Landscape"
@@ -923,5 +960,9 @@ class MainActivity : AppCompatActivity() {
     private fun clock(ms: Long): String {
         val total = (ms / 1000).toInt().coerceAtLeast(0)
         return "${total / 60}:${(total % 60).toString().padStart(2, '0')}"
+    }
+
+    companion object {
+        private const val PENDING_CLIP = "pending_clip"
     }
 }
